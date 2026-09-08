@@ -22,6 +22,41 @@ function _orderedMonitorNames(monitors, workspaces, focusedName) {
     return names
 }
 
+function _monLogical(mon) {
+    var s = (mon && mon.scale) ? mon.scale : 1
+    return { w: mon.width / s, h: mon.height / s }
+}
+
+function _usableRect(mon) {
+    var l = _monLogical(mon)
+    var r = mon.reserved || [0, 0, 0, 0]
+    return { x: r[0], y: r[1], w: l.w - r[0] - r[2], h: l.h - r[1] - r[3] }
+}
+
+function _tileRect(win, mon, box, P) {
+    var l = _monLogical(mon), R = _usableRect(mon)
+    var mmW = P.cellW - 2 * P.cellInset, mmH = P.cellH - 2 * P.cellInset
+    var k = Math.min(mmW / R.w, mmH / R.h)
+    var offX = P.cellInset + (mmW - R.w * k) / 2
+    var offY = P.cellInset + (mmH - R.h * k) / 2
+
+    var isFull = !!win.fullscreen ||
+        (Math.abs(win.ax - mon.x) <= 1 && Math.abs(win.ay - mon.y) <= 1 &&
+         Math.abs(win.sw - l.w) <= 1 && Math.abs(win.sh - l.h) <= 1)
+    if (isFull)
+        return { x: box.x + offX, y: box.y + offY, w: R.w * k, h: R.h * k }
+
+    var wx = (win.ax - mon.x) - R.x, wy = (win.ay - mon.y) - R.y
+    var cx = Math.max(0, wx), cy = Math.max(0, wy)
+    var cR = Math.min(wx + win.sw, R.w), cB = Math.min(wy + win.sh, R.h)
+    var cw = cR - cx, ch = cB - cy
+    if (cw <= 0 || ch <= 0) return null
+    return {
+        x: box.x + offX + cx * k, y: box.y + offY + cy * k,
+        w: Math.max(P.minTileW, cw * k), h: Math.max(P.minTileH, ch * k)
+    }
+}
+
 function layout(input) {
     var P = input.params
     var monByName = _index(input.monitors, "name")
@@ -55,7 +90,16 @@ function layout(input) {
     }
     var canvasH = rowTop > 0 ? rowTop - P.rowSpacing : 0
 
-    var tiles = []   // filled in Task 3/4
+    var tiles = []
+    for (var wi = 0; wi < input.windows.length; wi++) {
+        var win = input.windows[wi]
+        var wbox = boxByWs[win.workspaceId]
+        if (!wbox) continue
+        var wmon = monByName[wbox.monitorName]
+        if (!wmon) continue
+        var t = _tileRect(win, wmon, wbox, P)
+        if (t) { t.address = win.address; t.workspaceId = win.workspaceId; tiles.push(t) }
+    }
     return { canvasSize: { w: canvasW, h: canvasH }, boxes: boxes, tiles: tiles,
              _boxByWs: boxByWs, _monByName: monByName }
 }

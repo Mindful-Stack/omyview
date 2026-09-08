@@ -77,4 +77,52 @@ TestCase {
         var r = Logic.layout(input)
         compare(r.boxes.length, 1, "special/lock workspace id<0 excluded")
     }
+
+    function tilesByAddr(res, addr) {
+        for (var i = 0; i < res.tiles.length; i++)
+            if (res.tiles[i].address === addr) return res.tiles[i]
+        return null
+    }
+
+    // A normal window fully inside the usable area must land entirely within its box's
+    // mini-map inset — never bleeding outside (the exact failure of the old formula that
+    // subtracted the reserved origin but scaled against the whole monitor).
+    function test_tile_stays_within_minimap_fractional_scale() {
+        var input = {
+            monitors: [edp()],   // scale 1.25, reserved top 26
+            workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
+            windows: [{ address: "0xA", cls: "foot", ax: 100, ay: 200,
+                        sw: 800, sh: 600, workspaceId: 1, floating: false, fullscreen: false }],
+            focusedMonitorName: "eDP-1", params: params
+        }
+        var r = Logic.layout(input)
+        var b = boxById(r, 1), t = tilesByAddr(r, "0xA")
+        verify(t !== null)
+        var lo = 0.5
+        verify(t.x >= b.x + params.cellInset - lo)
+        verify(t.y >= b.y + params.cellInset - lo)
+        verify(t.x + t.w <= b.x + params.cellW - params.cellInset + lo)
+        verify(t.y + t.h <= b.y + params.cellH - params.cellInset + lo)
+    }
+
+    // Unequal aspect: an ultrawide usable area is wider than the cell's mini-map aspect,
+    // so it is width-limited => letterboxed vertically (offY > inset), horizontally flush.
+    function test_unequal_aspect_letterboxes_on_short_axis() {
+        var uw = { name: "DP-1", x: 0, y: 0, width: 5120, height: 1440,
+                   scale: 1, reserved: [0, 0, 0, 0], transform: 0 }
+        var input = {
+            monitors: [uw],
+            workspaces: [{ id: 1, monitorName: "DP-1", focused: true, occupied: true }],
+            // fullscreen window fills the usable rect exactly, so its tile == the fitted R
+            windows: [{ address: "0xF", cls: "x", ax: 0, ay: 0, sw: 5120, sh: 1440,
+                        workspaceId: 1, floating: false, fullscreen: true }],
+            focusedMonitorName: "DP-1", params: params
+        }
+        var r = Logic.layout(input)
+        var b = boxById(r, 1), t = tilesByAddr(r, "0xF")
+        // width-limited: fills mini-map width (148), centered vertically inside mmH (88)
+        fuzzyCompare(t.w, 148, 0.5, "fills mini-map width")
+        verify(t.h < 88 - 1)                       // letterboxed on height
+        verify(t.y > b.y + params.cellInset + 0.5) // vertically centered, not flush to inset
+    }
 }
