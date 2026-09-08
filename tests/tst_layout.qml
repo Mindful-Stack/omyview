@@ -125,4 +125,46 @@ TestCase {
         verify(t.h < 88 - 1)                       // letterboxed on height
         verify(t.y > b.y + params.cellInset + 0.5) // vertically centered, not flush to inset
     }
+
+    // Fullscreen fills R; a non-fullscreen window that pokes above the usable top is clipped
+    // to R (shorter, but starting at the same usable-top line). The clip window is NOT the
+    // full output (sw 1000, sh 1200), so the 1px fullscreen auto-detect must not claim it.
+    function test_fullscreen_fills_but_nonfullscreen_clips() {
+        function run(w) {
+            return Logic.layout({ monitors: [edp()],
+                workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
+                windows: [w], focusedMonitorName: "eDP-1", params: params })
+        }
+        var full = tilesByAddr(run({ address: "0xF", cls: "x", ax: 0, ay: 0,
+            sw: 2048, sh: 1280, workspaceId: 1, floating: false, fullscreen: true }), "0xF")
+        // ay:0 is above the usable top (R.y=26) => clipped; not full output => not auto-full
+        var norm = tilesByAddr(run({ address: "0xN", cls: "x", ax: 0, ay: 0,
+            sw: 1000, sh: 1200, workspaceId: 1, floating: false, fullscreen: false }), "0xN")
+        // fullscreen fills the height-limited mini-map exactly (mmH = 88)
+        fuzzyCompare(full.h, 88, 0.5, "fullscreen fills limiting axis")
+        // clipped window is shorter than the full fill, but shares the usable-top line
+        verify(norm.h < full.h - 1)
+        fuzzyCompare(norm.y, full.y, 0.5, "clip starts at usable top, not in the bar band")
+    }
+
+    // A window entirely left of the monitor has no intersection with R => no tile.
+    function test_offscreen_window_yields_no_tile() {
+        var r = Logic.layout({ monitors: [edp()],
+            workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
+            windows: [{ address: "0xOff", cls: "x", ax: -500, ay: 100, sw: 200, sh: 200,
+                        workspaceId: 1, floating: false, fullscreen: false }],
+            focusedMonitorName: "eDP-1", params: params })
+        compare(tilesByAddr(r, "0xOff"), null, "off-usable window is skipped")
+    }
+
+    // A hairline window is clamped to the minimum visible size.
+    function test_min_size_clamp() {
+        var r = Logic.layout({ monitors: [edp()],
+            workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
+            windows: [{ address: "0xTiny", cls: "x", ax: 100, ay: 100, sw: 2, sh: 2,
+                        workspaceId: 1, floating: true, fullscreen: false }],
+            focusedMonitorName: "eDP-1", params: params })
+        var t = tilesByAddr(r, "0xTiny")
+        compare(t.w, params.minTileW); compare(t.h, params.minTileH)
+    }
 }
