@@ -778,13 +778,20 @@ Fill this in under the task (replace the `?`s), because Task 9 reads it:
 
 ```
 | Case | Result (live / frozen / black / n-a) | Chosen strategy (live / snapshot / icon) |
-| A active+occluded | ? | ? |
-| B inactive workspace | ? | ? |
-| C other monitor | ? | ? (n-a if no external; mark unverified-when-docked) |
-| D animating content | ? | ? |
+| A active+occluded | real (Hyprland composites the active workspace) | live |
+| B inactive workspace | UNCONFIRMED — revisit directly in Task 10's grouped overview | live default (icon fallback); flip hidden→icon/snapshot if black |
+| C other monitor | LIVE — confirmed: external-monitor browser scroll shown live on the laptop overlay | live |
+| D animating content | LIVE — confirmed: real-time page scroll, not frozen | live |
 ```
 
 Strategy rule: live+non-black → `live`; non-black+frozen → `snapshot`; black → `icon`.
+
+**Decision (2026-09-08):** cross-output live capture works on Quickshell 0.3.1 / Hyprland
+0.56.2. Build with `capMode: "live"` for all tiles plus an always-present icon underneath the
+capture. Case B (a workspace hidden on every monitor) is the only unknown; it becomes visible
+the instant the real grouped overview renders in Task 10 — if hidden-workspace tiles are black
+there, set `capMode` to `"icon"` (or `"snapshot"`) for tiles whose workspace is not currently
+visible on any monitor. WindowTile already supports this per-tile.
 
 - [ ] **Step 4: Commit the recorded results (spike kept for now)**
 
