@@ -71,9 +71,10 @@ layer above and can cross boundaries.
 
 ### Components
 
-**1. `logic.mjs` — a pure JS module, no Quickshell imports.**
-The testable seam, imported by both `Overview.qml` (`import "logic.mjs" as Logic`) and the
-test QML. Given plain data, computes the layout. No side effects, no singletons.
+**1. `logic.js` — a pure JS module, no Quickshell imports.**
+A `.pragma library` JS module, imported by both `Overview.qml` and the test QML as
+`import "logic.js" as Logic`. Given plain data, computes the layout. No side effects, no
+singletons.
 
 ```
 layout(input) -> {
@@ -89,7 +90,7 @@ input = {
   workspaces: [{ id, monitorName, focused, occupied }],
   windows:    [{ address, cls, ax, ay, sw, sh, workspaceId, floating, fullscreen }],
   focusedMonitorName: "eDP-1",
-  params:     { cellW, cellH, cellInset, cellSpacing, rowSpacing, rowLabelH }
+  params:     { cellW, cellH, cellInset, cellSpacing, rowSpacing, rowLabelH, minTileW, minTileH }
 }
 ```
 
@@ -144,8 +145,8 @@ resolver so gesture and tests agree.
   focused-screen targeting, number/arrow/Enter selection, Esc/scrim close.
 
 **3. `WindowTile` (inline component or `WindowTile.qml`).** One window; stable per `address`.
-- `ScreencopyView { captureSource: (root.opened && handle) ? handle : null; live: liveOk }`
-  where `liveOk` is the per-case capture strategy the spike selects (§Step 0) — a tile on an
+- `ScreencopyView { captureSource: (root.opened && handle) ? handle : null; live: (capMode === "live") }`
+  where `capMode` (`"live"｜"snapshot"｜"icon"`) is the per-case strategy the spike selects (§Step 0) — a tile on an
   inactive workspace may use snapshot instead of `live`.
 - App-icon overlay (`Quickshell.iconPath(cls.toLowerCase(), true)`), small in a corner;
   centered/enlarged when the tile is very small (end-4's `compactMode`).
@@ -255,7 +256,7 @@ behaviour can differ by case and the plugin can therefore mix strategies per til
 | non-black but frozen | **snapshot-on-open** (`live:false` + `captureFrame()`) — a static thumbnail is still useful |
 | black / no usable frame | **icon tile** (v1 look) |
 
-`WindowTile.liveOk` / capture mode is chosen from these per-case rules (e.g. keyed on whether
+`WindowTile.capMode` is chosen from these per-case rules (e.g. keyed on whether
 the window's workspace is currently visible). **Drag-and-drop ships regardless** — it does not
 depend on capture. The spike is deleted before v2 lands; its result table goes in the plan.
 
@@ -263,7 +264,7 @@ depend on capture. The spike is deleted before v2 lands; its result table goes i
 
 **Tier 1 — pure-logic unit tests (CI, offscreen, no compositor).** Confirmed available:
 `qmltestrunner`, the `QtTest` QML module, and the `offscreen` QPA plugin are all installed.
-Tests load `logic.mjs` (no Quickshell imports) and assert on `layout()` / `hitWorkspace()`
+Tests load `logic.js` (no Quickshell imports) and assert on `layout()` / `hitWorkspace()`
 with **exact numeric expectations** (the coordinate mapping is the point):
 - **Usable-rect origin:** a window at the usable-area top-left (`ax=mon.x+reserved.l`,
   `ay=mon.y+reserved.t`) maps to exactly `(box.x+offX, box.y+offY)` — *not* offset by the
@@ -323,9 +324,9 @@ value).
 
 ```
 Overview.qml            (rewritten: canvas + boxes + tiles + DnD)
-logic.mjs               (new: pure layout/join/hit-testing)     ← Tier 1 target
+logic.js               (new: pure layout/join/hit-testing)     ← Tier 1 target
 WindowTile.qml          (new, optional: per-window preview tile)
-tests/tst_layout.qml    (new: QtTest cases over logic.mjs)
+tests/tst_layout.qml    (new: QtTest cases over logic.js)
 justfile                (new: `test`, `test-integration` targets)
 .github/workflows/ci.yml(new: Tier 1 on push)
 manifest.json           (version → 0.2.0)
@@ -338,7 +339,7 @@ and tile are plain imports, not manifest-declared.
 ## Sequencing (for the implementation plan)
 
 1. Step-0 screencopy spike across cases A–D → record result table, pick per-case capture policy.
-2. Extract `logic.mjs` from v1's `monitorRows()`: usable-rect mapping, canvas-absolute tiles,
+2. Extract `logic.js` from v1's `monitorRows()`: usable-rect mapping, canvas-absolute tiles,
    fullscreen/clip handling, `hitWorkspace`.
 3. Tier 1 tests (numeric, incl. fullscreen/fractional-scale/unequal-aspect/clipping) + CI green.
 4. Rewrite `Overview.qml` to the canvas/boxes/tiles structure with the address-keyed,
