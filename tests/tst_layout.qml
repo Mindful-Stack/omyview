@@ -182,4 +182,14 @@ TestCase {
         // above the cells, in the row-label band (y < 16) => null
         compare(Logic.hitWorkspace(r.boxes, 10, 4), null)
     }
+
+    function test_diff_by_address() {
+        var prev = ["0xA", "0xB"]
+        var next = [{ address: "0xB", x: 1, y: 1, w: 1, h: 1 },
+                    { address: "0xC", x: 2, y: 2, w: 2, h: 2 }]
+        var d = Logic.diffByAddress(prev, next)
+        compare(d.adds.length, 1);    compare(d.adds[0].address, "0xC")
+        compare(d.updates.length, 1); compare(d.updates[0].address, "0xB")
+        compare(d.removes.length, 1); compare(d.removes[0], "0xA")
+    }
 }

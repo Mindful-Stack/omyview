@@ -112,3 +112,17 @@ function hitWorkspace(boxes, px, py) {
     }
     return null
 }
+
+function diffByAddress(prevAddresses, nextTiles) {
+    var prev = {}
+    for (var i = 0; i < prevAddresses.length; i++) prev[prevAddresses[i]] = true
+    var next = {}, adds = [], updates = []
+    for (var j = 0; j < nextTiles.length; j++) {
+        var t = nextTiles[j]
+        next[t.address] = true
+        if (prev[t.address]) updates.push(t); else adds.push(t)
+    }
+    var removes = []
+    for (var a in prev) if (!next[a]) removes.push(a)
+    return { adds: adds, updates: updates, removes: removes }
+}
