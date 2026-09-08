@@ -671,23 +671,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Qt Quick test tooling
+      - name: Install Qt6 Quick test tooling
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             qml6-module-qttest qml6-module-qtquick qml6-module-qtqml \
             qt6-declarative-dev-tools libqt6quick6 libgl1
-      - uses: jdx/mise-action@v2
       - name: Run Tier 1 logic tests (offscreen)
-        run: mise run test
+        run: bash tests/run.sh
 ```
 
-Property this must achieve: the job runs the *same* `mise run test` command the dev runs
-locally — one definition of the test command, in `mise.toml` — and fails the build when a
-logic test fails. `qt6-declarative-dev-tools` provides the `qmltestrunner` binary; the
-`qml6-module-*` packages provide `QtTest`/`QtQuick`/`QtQml`; `libgl1` + the offscreen QPA (in
-`libqt6gui6`, pulled transitively) let it run headless; `jdx/mise-action` provides `mise` so
-the task resolves.
+Property this must achieve: CI runs `tests/run.sh` — the *same* Qt6 resolver `mise run test`
+runs locally, so the test command has one definition and CI fails the build when a logic test
+fails (no `mise`/`just` needed in the runner). `qt6-declarative-dev-tools` provides the Qt6
+`qmltestrunner`; the `qml6-module-*` packages provide `QtTest`/`QtQuick`/`QtQml`; `libgl1` +
+the offscreen QPA (in `libqt6gui6`, pulled transitively) let it run headless. The resolver's
+`qmltestrunner6` branch matches Debian/Ubuntu's binary name; if the runner instead ships it at
+`/usr/lib/qt6/bin/qmltestrunner`, the second branch catches it. **Unverifiable until pushed** —
+the first Actions run must confirm the resolver finds the Qt6 binary; if not, adjust
+`tests/run.sh`'s candidates to the name the runner logs.
 
 - [ ] **Step 2: Verify locally that the command matches CI**
 

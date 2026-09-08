@@ -1,0 +1,17 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  logic-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt6 Quick test tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qml6-module-qttest qml6-module-qtquick qml6-module-qtqml \
+            qt6-declarative-dev-tools libqt6quick6 libgl1
+      - name: Run Tier 1 logic tests (offscreen)
+        run: bash tests/run.sh
