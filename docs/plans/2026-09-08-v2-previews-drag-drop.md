@@ -47,6 +47,7 @@ test, or every later "expected: FAIL" is worthless.
 
 **Files:**
 - Create: `tests/tst_smoke.qml`
+- Create: `tests/run.sh` (executable — resolves the Qt6 qmltestrunner; PATH may shadow it with Qt5)
 - Create: `mise.toml`
 
 - [ ] **Step 1: Be on the feature branch**
@@ -72,14 +73,31 @@ TestCase {
 }
 ```
 
-- [ ] **Step 3: Add the `test` task**
+- [ ] **Step 3: Add the `test` task + Qt6 runner resolver**
 
-`mise.toml`:
+`tests/run.sh` (PATH's `qmltestrunner` may be Qt5, which silently exits 1 on Qt6 imports):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+if command -v qmltestrunner6 >/dev/null 2>&1; then
+  RUNNER=qmltestrunner6                          # Debian/Ubuntu (qt6-declarative-dev-tools)
+elif [ -x /usr/lib/qt6/bin/qmltestrunner ]; then
+  RUNNER=/usr/lib/qt6/bin/qmltestrunner          # Arch (qt6-declarative), upstream layout
+else
+  echo "No Qt6 qmltestrunner found (tried: qmltestrunner6, /usr/lib/qt6/bin/qmltestrunner)." >&2
+  echo "Install qt6-declarative (Arch) or qt6-declarative-dev-tools (Debian/Ubuntu)." >&2
+  exit 127
+fi
+exec env QT_QPA_PLATFORM=offscreen "$RUNNER" -input "$(dirname "$0")"
+```
+
+`chmod +x tests/run.sh`, then `mise.toml`:
 
 ```toml
 [tasks.test]
 description = "Tier 1: pure-logic unit tests, no compositor"
-run = "QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/"
+run = "bash tests/run.sh"
 ```
 
 - [ ] **Step 4: Run it — expect PASS**
@@ -99,8 +117,8 @@ TDD "fails first" step a lie. Then revert to `2` and re-run → PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tests/tst_smoke.qml mise.toml
-git commit -m "test: offscreen qmltestrunner harness + mise run test target"
+git add tests/tst_smoke.qml tests/run.sh mise.toml
+git commit -m "test: offscreen qmltestrunner harness + mise test task"
 ```
 
 ---
