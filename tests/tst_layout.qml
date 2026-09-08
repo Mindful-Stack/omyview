@@ -192,4 +192,35 @@ TestCase {
         compare(d.updates.length, 1); compare(d.updates[0].address, "0xB")
         compare(d.removes.length, 1); compare(d.removes[0], "0xA")
     }
+
+    // The earlier fullscreen fixtures used geometry equal to the output, so the clip path
+    // happens to equal the fill path there and the `if (isFull)` branch is never pinned. Here
+    // the window is fullscreen-FLAGGED but reports small/offset geometry: fill must still fill
+    // R (the flag wins), whereas clipping that geometry would give a tiny ~21px-wide tile.
+    function test_fullscreen_flag_fills_R_even_when_geometry_small() {
+        var r = Logic.layout({ monitors: [edp()],
+            workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
+            windows: [{ address: "0xFS", cls: "x", ax: 500, ay: 400, sw: 300, sh: 200,
+                        workspaceId: 1, floating: false, fullscreen: true }],
+            focusedMonitorName: "eDP-1", params: params })
+        var b = boxById(r, 1), t = tilesByAddr(r, "0xFS")
+        verify(t !== null)
+        fuzzyCompare(t.h, 88, 0.5, "fullscreen fills R height (mmH)")
+        verify(t.w > 100)                        // fill: R.w*k ~143.7; a clipped 300px would be ~21
+        fuzzyCompare(t.y, b.y + 6, 0.5)          // offY
+    }
+
+    // Pins the min-size clamp's position clamp: a hairline window near the far edge of the
+    // usable area, once widened to minTileW, must not spill past the cell's mini-map inset.
+    function test_min_clamp_stays_within_minimap_at_edge() {
+        var r = Logic.layout({ monitors: [edp()],
+            workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
+            windows: [{ address: "0xEdge", cls: "x", ax: 2046, ay: 100, sw: 2, sh: 2,
+                        workspaceId: 1, floating: true, fullscreen: false }],
+            focusedMonitorName: "eDP-1", params: params })
+        var b = boxById(r, 1), t = tilesByAddr(r, "0xEdge")
+        verify(t !== null)
+        compare(t.w, params.minTileW)                                   // min-clamped
+        verify(t.x + t.w <= b.x + params.cellW - params.cellInset + 0.01) // stays in the inset
+    }
 }

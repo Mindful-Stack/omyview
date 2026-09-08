@@ -51,10 +51,12 @@ function _tileRect(win, mon, box, P) {
     var cR = Math.min(wx + win.sw, R.w), cB = Math.min(wy + win.sh, R.h)
     var cw = cR - cx, ch = cB - cy
     if (cw <= 0 || ch <= 0) return null
-    return {
-        x: box.x + offX + cx * k, y: box.y + offY + cy * k,
-        w: Math.max(P.minTileW, cw * k), h: Math.max(P.minTileH, ch * k)
-    }
+    var tx = box.x + offX + cx * k, ty = box.y + offY + cy * k
+    var tw = Math.max(P.minTileW, cw * k), th = Math.max(P.minTileH, ch * k)
+    // keep the (possibly min-clamped) tile inside the cell's mini-map inset
+    tx = Math.max(box.x + P.cellInset, Math.min(tx, box.x + P.cellW - P.cellInset - tw))
+    ty = Math.max(box.y + P.cellInset, Math.min(ty, box.y + P.cellH - P.cellInset - th))
+    return { x: tx, y: ty, w: tw, h: th }
 }
 
 function layout(input) {
@@ -100,8 +102,7 @@ function layout(input) {
         var t = _tileRect(win, wmon, wbox, P)
         if (t) { t.address = win.address; t.workspaceId = win.workspaceId; tiles.push(t) }
     }
-    return { canvasSize: { w: canvasW, h: canvasH }, boxes: boxes, tiles: tiles,
-             _boxByWs: boxByWs, _monByName: monByName }
+    return { canvasSize: { w: canvasW, h: canvasH }, boxes: boxes, tiles: tiles }
 }
 
 function hitWorkspace(boxes, px, py) {
