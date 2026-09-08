@@ -1,0 +1,3 @@
+[tasks.test]
+description = "Tier 1: pure-logic unit tests, no compositor"
+run = "bash tests/run.sh"
