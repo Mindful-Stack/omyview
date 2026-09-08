@@ -82,6 +82,29 @@ Item {
 
     // Reconcile the tiles ListModel in place (drag-safe: never touch the dragged address).
     property string draggingAddress: ""
+    property int _pendingTargetWs: -1
+    property int _reconcileTries: 0
+    Timer {
+        id: reconcileTimer
+        interval: 120; repeat: true
+        onTriggered: root._reconcileStep()
+    }
+    function _startMove(addr, targetWs) {
+        root.draggingAddress = ""
+        root._pendingTargetWs = targetWs
+        root._reconcileTries = 0
+        Hyprland.dispatch('hl.dsp.window.move({ workspace = ' + targetWs +
+                          ', follow = false, window = "address:' + addr + '" })')
+        if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
+        if (typeof Hyprland.refreshWorkspaces === "function") Hyprland.refreshWorkspaces()
+        reconcileTimer.restart()
+    }
+    function _reconcileStep() {
+        root._reconcileTries++
+        if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
+        root.rebuild()   // authoritative reposition from fresh Hyprland geometry
+        if (root._reconcileTries >= 6) { reconcileTimer.stop(); root._pendingTargetWs = -1 }
+    }
     function applyTiles(tiles) {
         var prev = []
         for (var i = 0; i < tilesModel.count; i++) prev.push(tilesModel.get(i).address)
@@ -147,7 +170,7 @@ Item {
         rebuild(); refreshTimer.restart()
         Qt.callLater(function () { keyCatcher.forceActiveFocus() })
     }
-    function close() { opened = false }
+    function close() { root.draggingAddress = ""; reconcileTimer.stop(); opened = false }
     function toggle() { if (opened) close(); else open() }
 
     Timer { id: refreshTimer; interval: 80; onTriggered: if (root.opened) root.rebuild() }
@@ -245,14 +268,46 @@ Item {
                         capMode: "live"
                         borderColor: root.borderColor; bg: root.background; fg: root.foreground
                         MouseArea {
+                            id: dragArea
                             anchors.fill: parent
                             acceptedButtons: Qt.LeftButton | Qt.MiddleButton
-                            onClicked: function (m) {
-                                if (m.button === Qt.MiddleButton)
+                            drag.target: undefined
+                            property bool moved: false
+                            onPressed: function (m) {
+                                if (m.button !== Qt.LeftButton) return
+                                root.draggingAddress = model.address
+                                parent.z = 99999; moved = false
+                                drag.target = parent
+                            }
+                            onPositionChanged: if (drag.active) moved = true
+                            onReleased: function (m) {
+                                if (m.button === Qt.MiddleButton) {
                                     Hyprland.dispatch('hl.dsp.window.close({ window = "address:' + model.address + '" })')
-                                else {
-                                    Hyprland.dispatch('hl.dsp.focus({ window = "address:' + model.address + '" })')
-                                    root.close()
+                                    return
+                                }
+                                drag.target = undefined; parent.z = 0
+                                var addr = model.address
+                                var wasMoved = moved
+                                // Capture the drop-point centre in canvas coords BEFORE
+                                // restoring bindings (rebinding resets parent.x/y to model.wx).
+                                var cx = parent.x + parent.width / 2
+                                var cy = parent.y + parent.height / 2
+                                // Dragging assigned parent.x/y imperatively, destroying the
+                                // `x: model.wx` bindings — restore them so snap-back and the
+                                // post-move rebuild actually reposition the tile.
+                                parent.x = Qt.binding(function () { return model.wx })
+                                parent.y = Qt.binding(function () { return model.wy })
+                                if (!wasMoved) {   // a click, not a drag
+                                    root.draggingAddress = ""
+                                    Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })')
+                                    root.close(); return
+                                }
+                                var targetWs = Logic.hitWorkspace(root.boxes, cx, cy)
+                                if (targetWs !== null && targetWs !== model.wsid) {
+                                    root.draggingAddress = ""   // release grab; move rebuilds
+                                    root._startMove(addr, targetWs)
+                                } else {
+                                    root.draggingAddress = ""; root.rebuild()   // snap back
                                 }
                             }
                         }
