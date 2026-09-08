@@ -34,7 +34,7 @@ Then press **SUPER+P** to open the overview and observe. (Copy only files that e
 mise run test        # = QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/
 ```
 
-**Layout params used in all logic tests** (a shared fixture — see Task 2, `PARAMS`):
+**Layout params used in all logic tests** (a shared fixture — see Task 2, `params`):
 `{ cellW:160, cellH:100, cellInset:6, cellSpacing:8, rowSpacing:12, rowLabelH:16, minTileW:8, minTileH:6 }`.
 Derived constants the tests reuse: mini-map `mmW = 160−12 = 148`, `mmH = 100−12 = 88`.
 
@@ -144,7 +144,7 @@ import "../logic.js" as Logic
 TestCase {
     name: "Layout"
 
-    readonly property var PARAMS: ({
+    readonly property var params: ({
         cellW: 160, cellH: 100, cellInset: 6, cellSpacing: 8,
         rowSpacing: 12, rowLabelH: 16, minTileW: 8, minTileH: 6
     })
@@ -171,7 +171,7 @@ TestCase {
             ],
             windows: [],
             focusedMonitorName: "eDP-1",
-            params: PARAMS
+            params: params
         }
         var r = Logic.layout(input)
         compare(r.boxes.length, 3, "three boxes")
@@ -197,7 +197,7 @@ TestCase {
             ],
             windows: [],
             focusedMonitorName: "eDP-1",
-            params: PARAMS
+            params: params
         }
         var r = Logic.layout(input)
         // focused monitor's workspace sits in the top row (smaller y) despite input order
@@ -211,7 +211,7 @@ TestCase {
                 { id: 1,  monitorName: "eDP-1", focused: true,  occupied: true },
                 { id: -99, monitorName: "eDP-1", focused: false, occupied: false }
             ],
-            windows: [], focusedMonitorName: "eDP-1", params: PARAMS
+            windows: [], focusedMonitorName: "eDP-1", params: params
         }
         var r = Logic.layout(input)
         compare(r.boxes.length, 1, "special/lock workspace id<0 excluded")
@@ -341,16 +341,16 @@ Append to `tst_layout.qml`:
             workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
             windows: [{ address: "0xA", cls: "foot", ax: 100, ay: 200,
                         sw: 800, sh: 600, workspaceId: 1, floating: false, fullscreen: false }],
-            focusedMonitorName: "eDP-1", params: PARAMS
+            focusedMonitorName: "eDP-1", params: params
         }
         var r = Logic.layout(input)
         var b = boxById(r, 1), t = tilesByAddr(r, "0xA")
         verify(t !== null)
         var lo = 0.5
-        verify(t.x >= b.x + PARAMS.cellInset - lo)
-        verify(t.y >= b.y + PARAMS.cellInset - lo)
-        verify(t.x + t.w <= b.x + PARAMS.cellW - PARAMS.cellInset + lo)
-        verify(t.y + t.h <= b.y + PARAMS.cellH - PARAMS.cellInset + lo)
+        verify(t.x >= b.x + params.cellInset - lo)
+        verify(t.y >= b.y + params.cellInset - lo)
+        verify(t.x + t.w <= b.x + params.cellW - params.cellInset + lo)
+        verify(t.y + t.h <= b.y + params.cellH - params.cellInset + lo)
     }
 
     // Unequal aspect: an ultrawide usable area is wider than the cell's mini-map aspect,
@@ -364,14 +364,14 @@ Append to `tst_layout.qml`:
             // fullscreen window fills the usable rect exactly, so its tile == the fitted R
             windows: [{ address: "0xF", cls: "x", ax: 0, ay: 0, sw: 5120, sh: 1440,
                         workspaceId: 1, floating: false, fullscreen: true }],
-            focusedMonitorName: "DP-1", params: PARAMS
+            focusedMonitorName: "DP-1", params: params
         }
         var r = Logic.layout(input)
         var b = boxById(r, 1), t = tilesByAddr(r, "0xF")
         // width-limited: fills mmW (148), centered vertically inside mmH (88)
         fuzzyCompare(t.w, 148, 0.5, "fills mini-map width")
         verify(t.h < 88 - 1)                       // letterboxed on height
-        verify(t.y > b.y + PARAMS.cellInset + 0.5) // vertically centered, not flush to inset
+        verify(t.y > b.y + params.cellInset + 0.5) // vertically centered, not flush to inset
     }
 ```
 
@@ -475,7 +475,7 @@ Append to `tst_layout.qml`:
         function run(w) {
             return Logic.layout({ monitors: [edp()],
                 workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
-                windows: [w], focusedMonitorName: "eDP-1", params: PARAMS })
+                windows: [w], focusedMonitorName: "eDP-1", params: params })
         }
         var full = tilesByAddr(run({ address: "0xF", cls: "x", ax: 0, ay: 0,
             sw: 2048, sh: 1280, workspaceId: 1, floating: false, fullscreen: true }), "0xF")
@@ -495,7 +495,7 @@ Append to `tst_layout.qml`:
             workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
             windows: [{ address: "0xOff", cls: "x", ax: -500, ay: 100, sw: 200, sh: 200,
                         workspaceId: 1, floating: false, fullscreen: false }],
-            focusedMonitorName: "eDP-1", params: PARAMS })
+            focusedMonitorName: "eDP-1", params: params })
         compare(tilesByAddr(r, "0xOff"), null, "off-usable window is skipped")
     }
 
@@ -505,9 +505,9 @@ Append to `tst_layout.qml`:
             workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
             windows: [{ address: "0xTiny", cls: "x", ax: 100, ay: 100, sw: 2, sh: 2,
                         workspaceId: 1, floating: true, fullscreen: false }],
-            focusedMonitorName: "eDP-1", params: PARAMS })
+            focusedMonitorName: "eDP-1", params: params })
         var t = tilesByAddr(r, "0xTiny")
-        compare(t.w, PARAMS.minTileW); compare(t.h, PARAMS.minTileH)
+        compare(t.w, params.minTileW); compare(t.h, params.minTileH)
     }
 ```
 
@@ -546,7 +546,7 @@ Append to `tst_layout.qml`:
             workspaces: [
                 { id: 1, monitorName: "eDP-1", focused: true,  occupied: true },
                 { id: 2, monitorName: "eDP-1", focused: false, occupied: false }
-            ], windows: [], focusedMonitorName: "eDP-1", params: PARAMS })
+            ], windows: [], focusedMonitorName: "eDP-1", params: params })
         var b2 = boxById(r, 2)
         // centre of box 2 => ws 2
         compare(Logic.hitWorkspace(r.boxes, b2.x + 80, b2.y + 50), 2)
