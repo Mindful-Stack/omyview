@@ -14,7 +14,7 @@
 
 ## Conventions used by every task
 
-**Branch:** all work lands on `v2-previews-drag-drop` (created in Task 1).
+**Branch:** all work lands on `v2-previews-drag-drop` (already created; Task 1 ensures you're on it).
 
 **Live-test loop (QML tasks).** The running shell loads the *installed* clone, not this
 repo. To see a change live, copy the changed files over and restart the shell — a plain
@@ -27,10 +27,11 @@ cp logic.js WindowTile.qml Overview.qml "$LIVE"/ 2>/dev/null; omarchy restart sh
 
 Then press **SUPER+P** to open the overview and observe. (Copy only files that exist yet.)
 
-**Unit-test loop (logic tasks).** No compositor needed:
+**Unit-test loop (logic tasks).** No compositor needed — via mise (tasks defined in
+`mise.toml`, Task 1):
 
 ```bash
-QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/
+mise run test        # = QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/
 ```
 
 **Layout params used in all logic tests** (a shared fixture — see Task 2, `PARAMS`):
@@ -46,7 +47,7 @@ test, or every later "expected: FAIL" is worthless.
 
 **Files:**
 - Create: `tests/tst_smoke.qml`
-- Create: `justfile`
+- Create: `mise.toml`
 
 - [ ] **Step 1: Be on the feature branch**
 
@@ -71,26 +72,26 @@ TestCase {
 }
 ```
 
-- [ ] **Step 3: Add the `test` target**
+- [ ] **Step 3: Add the `test` task**
 
-`justfile`:
+`mise.toml`:
 
-```make
-# Tier 1: pure-logic unit tests, no compositor
-test:
-    QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/
+```toml
+[tasks.test]
+description = "Tier 1: pure-logic unit tests, no compositor"
+run = "QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/"
 ```
 
 - [ ] **Step 4: Run it — expect PASS**
 
-Run: `just test`
+Run: `mise run test`
 Expected: PASS, `Totals: 1 passed, 0 failed`.
 **Distinguishes:** that `qmltestrunner`, the `QtTest` QML module, and the `offscreen` QPA
 plugin are all present and wired — i.e. the toolchain itself works.
 
 - [ ] **Step 5: Prove the harness surfaces RED**
 
-Temporarily change the assertion to `compare(1 + 1, 3, "arithmetic")`, run `just test`.
+Temporarily change the assertion to `compare(1 + 1, 3, "arithmetic")`, run `mise run test`.
 Expected: FAIL, `1 failed`, message names `arithmetic` and shows `Actual 2 / Expected 3`.
 **Distinguishes:** a harness that always passes. A green-only harness makes every later
 TDD "fails first" step a lie. Then revert to `2` and re-run → PASS.
@@ -98,8 +99,8 @@ TDD "fails first" step a lie. Then revert to `2` and re-run → PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tests/tst_smoke.qml justfile
-git commit -m "test: offscreen qmltestrunner harness + just test target"
+git add tests/tst_smoke.qml mise.toml
+git commit -m "test: offscreen qmltestrunner harness + mise run test target"
 ```
 
 ---
@@ -202,7 +203,7 @@ TestCase {
 
 - [ ] **Step 2: Run — expect FAIL**
 
-Run: `just test`
+Run: `mise run test`
 Expected: FAIL — `Logic.layout is not a function` (module has no `layout` yet).
 **Distinguishes:** the module is actually loaded and the function is genuinely missing —
 not a typo'd import passing by accident.
@@ -281,7 +282,7 @@ all rows.
 
 - [ ] **Step 4: Run — expect PASS**
 
-Run: `just test`
+Run: `mise run test`
 Expected: PASS (smoke + 3 layout tests).
 
 - [ ] **Step 5: Commit**
@@ -358,7 +359,7 @@ Append to `tst_layout.qml`:
 
 - [ ] **Step 2: Run — expect FAIL**
 
-Run: `just test`
+Run: `mise run test`
 Expected: FAIL — the two new tests fail because `tiles` is still empty (`t === null`, `verify`
 fails). **Distinguishes:** tile computation genuinely absent, not a bad selector.
 
@@ -426,7 +427,7 @@ mini-map bounds.
 
 - [ ] **Step 4: Run — expect PASS**
 
-Run: `just test`
+Run: `mise run test`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -499,7 +500,7 @@ clamped to `minTileW/minTileH`.
 
 - [ ] **Step 2: Run — expect PASS** (behaviour implemented in Task 3)
 
-Run: `just test`
+Run: `mise run test`
 Expected: PASS (all layout tests). These four assertions guard the fullscreen/clip/skip/clamp
 branches of `_tileRect` against regression.
 
@@ -558,7 +559,7 @@ function hitWorkspace(boxes, px, py) {
 Property: returns the workspace whose box contains the point; the inter-cell gaps and the
 row-label band return `null` (a drop there is a no-op, not a wrong-workspace move).
 
-- [ ] **Step 4: Run — expect PASS.** `just test`.
+- [ ] **Step 4: Run — expect PASS.** `mise run test`.
 
 - [ ] **Step 5: Commit** `git commit -am "feat(logic): hitWorkspace point test"`
 
@@ -613,7 +614,7 @@ function diffByAddress(prevAddresses, nextTiles) {
 }
 ```
 
-- [ ] **Step 4: Run — expect PASS.** `just test`.
+- [ ] **Step 4: Run — expect PASS.** `mise run test`.
 
 - [ ] **Step 5: Commit** `git commit -am "feat(logic): diffByAddress reconcile core"`
 
@@ -644,18 +645,21 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             qml6-module-qttest qml6-module-qtquick qml6-module-qtqml \
             qt6-declarative-dev-tools libqt6quick6 libgl1
+      - uses: jdx/mise-action@v2
       - name: Run Tier 1 logic tests (offscreen)
-        run: QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/
+        run: mise run test
 ```
 
-Property this must achieve: the job runs the *same* command as `just test` and fails the
-build when a logic test fails. `qt6-declarative-dev-tools` provides the `qmltestrunner`
-binary; the `qml6-module-*` packages provide `QtTest`/`QtQuick`/`QtQml`; `libgl1` + the
-offscreen QPA (in `libqt6gui6`, pulled transitively) let it run headless.
+Property this must achieve: the job runs the *same* `mise run test` command the dev runs
+locally — one definition of the test command, in `mise.toml` — and fails the build when a
+logic test fails. `qt6-declarative-dev-tools` provides the `qmltestrunner` binary; the
+`qml6-module-*` packages provide `QtTest`/`QtQuick`/`QtQml`; `libgl1` + the offscreen QPA (in
+`libqt6gui6`, pulled transitively) let it run headless; `jdx/mise-action` provides `mise` so
+the task resolves.
 
 - [ ] **Step 2: Verify locally that the command matches CI**
 
-Run: `just test`
+Run: `mise run test`
 Expected: PASS. (The workflow can only be confirmed green once pushed; if the Actions run
 fails on a missing package, add the exact package the log names — likely `qml6-module-qtquick`
 variants — and push again. Do **not** claim CI passes until the Actions run is green.)
@@ -1286,7 +1290,7 @@ lands on the target workspace and the active workspace is unchanged.
 
 **Files:**
 - Create: `tests/integration/move.sh`
-- Modify: `justfile`
+- Modify: `mise.toml`
 
 - [ ] **Step 1: Establish the headless launch (this task's first, uncertain step)**
 
@@ -1336,22 +1340,22 @@ false` genuinely does **not** switch the active workspace — a change to a foll
 red. Both are asserted against `hyprctl`, values the compositor reports, not values the test
 supplied.
 
-- [ ] **Step 3: Add the target + verify locally**
+- [ ] **Step 3: Add the task + verify locally**
 
-`justfile`:
+Append to `mise.toml`:
 
-```make
-# Tier 2: headless-Hyprland integration (local; needs Hyprland + foot + jq)
-test-integration:
-    bash tests/integration/move.sh
+```toml
+[tasks.test-integration]
+description = "Tier 2: headless-Hyprland integration (local; needs Hyprland + foot + jq)"
+run = "bash tests/integration/move.sh"
 ```
 
-Run: `just test-integration` → expect `PASS: silent move to ws 3, active ws unchanged`.
+Run: `mise run test-integration` → expect `PASS: silent move to ws 3, active ws unchanged`.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/integration/move.sh justfile
+git add tests/integration/move.sh mise.toml
 git commit -m "test(integration): headless-Hyprland silent-move assertion"
 ```
 
@@ -1383,7 +1387,7 @@ git rm -r spike/
 - [ ] **Step 4: Full validation + final manual pass**
 
 ```bash
-just test                       # Tier 1 green
+mise run test                       # Tier 1 green
 omarchy plugin validate .       # exit 0
 # copy over + omarchy restart shell, then SUPER+P
 ```
