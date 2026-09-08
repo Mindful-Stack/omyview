@@ -289,8 +289,7 @@ function layout(input) {
     var canvasH = rowTop > 0 ? rowTop - P.rowSpacing : 0
 
     var tiles = []   // filled in Task 3/4
-    return { canvasSize: { w: canvasW, h: canvasH }, boxes: boxes, tiles: tiles,
-             _boxByWs: boxByWs, _monByName: monByName }
+    return { canvasSize: { w: canvasW, h: canvasH }, boxes: boxes, tiles: tiles }
 }
 ```
 
@@ -416,10 +415,12 @@ function _tileRect(win, mon, box, P) {
     var cR = Math.min(wx + win.sw, R.w), cB = Math.min(wy + win.sh, R.h)
     var cw = cR - cx, ch = cB - cy
     if (cw <= 0 || ch <= 0) return null
-    return {
-        x: box.x + offX + cx * k, y: box.y + offY + cy * k,
-        w: Math.max(P.minTileW, cw * k), h: Math.max(P.minTileH, ch * k)
-    }
+    var tx = box.x + offX + cx * k, ty = box.y + offY + cy * k
+    var tw = Math.max(P.minTileW, cw * k), th = Math.max(P.minTileH, ch * k)
+    // keep the (possibly min-clamped) tile inside the cell's mini-map inset
+    tx = Math.max(box.x + P.cellInset, Math.min(tx, box.x + P.cellW - P.cellInset - tw))
+    ty = Math.max(box.y + P.cellInset, Math.min(ty, box.y + P.cellH - P.cellInset - th))
+    return { x: tx, y: ty, w: tw, h: th }
 }
 ```
 
@@ -436,7 +437,11 @@ And in `layout`, replace `var tiles = []   // filled in Task 3/4` with:
         var t = _tileRect(win, wmon, wbox, P)
         if (t) { t.address = win.address; t.workspaceId = win.workspaceId; tiles.push(t) }
     }
+    return { canvasSize: { w: canvasW, h: canvasH }, boxes: boxes, tiles: tiles }
 ```
+
+(Return only `canvasSize`/`boxes`/`tiles` — do not leak the internal `boxByWs`/`monByName`
+maps.)
 
 Property: `k = min(mmW/R.w, mmH/R.h)` uses the **usable** rect `R` (reserved subtracted from
 size), and window positions are taken relative to `R.x/R.y`; centering offsets place the
@@ -515,6 +520,15 @@ Property these lock in: **the 1px fullscreen auto-detect claims a window as full
 when its geometry is within 1px of the whole output** — a merely-tall window (`sh: 1200`, not
 `1280`) is clipped to R, not filled. An off-usable window yields no tile; a hairline window is
 clamped to `minTileW/minTileH`.
+
+Also add two review-driven tests (present in `tests/tst_layout.qml`) that these first four do
+NOT catch — each verified to fail before its fix:
+- `test_fullscreen_flag_fills_R_even_when_geometry_small` — a **fullscreen-flagged** window with
+  small/offset geometry (`ax500 ay400 sw300 sh200`) must **fill R** (`t.h≈88`, `t.w>100`), which
+  the clip path cannot do. Pins the `if (isFull)` branch: delete it and `t.h`→~14, test reds.
+- `test_min_clamp_stays_within_minimap_at_edge` — a hairline window at the far-right usable edge
+  (`ax2046 sw2`) is min-clamped to `minTileW` yet must not spill past the cell inset
+  (`t.x + t.w ≤ b.x + cellW − cellInset`). Pins the position-clamp in `_tileRect`.
 
 - [ ] **Step 2: Run — expect PASS** (behaviour implemented in Task 3)
 
