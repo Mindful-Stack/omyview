@@ -167,4 +167,19 @@ TestCase {
         var t = tilesByAddr(r, "0xTiny")
         compare(t.w, params.minTileW); compare(t.h, params.minTileH)
     }
+
+    function test_hit_workspace() {
+        var r = Logic.layout({ monitors: [edp()],
+            workspaces: [
+                { id: 1, monitorName: "eDP-1", focused: true,  occupied: true },
+                { id: 2, monitorName: "eDP-1", focused: false, occupied: false }
+            ], windows: [], focusedMonitorName: "eDP-1", params: params })
+        var b2 = boxById(r, 2)
+        // centre of box 2 => ws 2
+        compare(Logic.hitWorkspace(r.boxes, b2.x + 80, b2.y + 50), 2)
+        // the gap between box 1 and box 2 (x in 160..168) => null
+        compare(Logic.hitWorkspace(r.boxes, 164, b2.y + 50), null)
+        // above the cells, in the row-label band (y < 16) => null
+        compare(Logic.hitWorkspace(r.boxes, 10, 4), null)
+    }
 }

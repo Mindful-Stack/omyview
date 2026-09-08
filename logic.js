@@ -103,3 +103,12 @@ function layout(input) {
     return { canvasSize: { w: canvasW, h: canvasH }, boxes: boxes, tiles: tiles,
              _boxByWs: boxByWs, _monByName: monByName }
 }
+
+function hitWorkspace(boxes, px, py) {
+    for (var i = 0; i < boxes.length; i++) {
+        var b = boxes[i]
+        if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h)
+            return b.workspaceId
+    }
+    return null
+}
