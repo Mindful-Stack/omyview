@@ -1261,28 +1261,31 @@ In the tiles `Repeater` delegate, replace the click-only `MouseArea` with:
                                     return
                                 }
                                 drag.target = undefined; parent.z = 0
-                                // Dragging assigned parent.x/y imperatively, which DESTROYS
-                                // the `x: model.wx` bindings. Restore them so snap-back and the
+                                var addr = model.address
+                                var wasMoved = moved
+                                // Capture the drop-point centre in canvas coords FIRST — the
+                                // rebinding below resets parent.x/y to model.wx, so reading the
+                                // drop position after it would test the tile's ORIGINAL spot and
+                                // no move would ever register.
+                                var cx = parent.x + parent.width / 2
+                                var cy = parent.y + parent.height / 2
+                                // Dragging assigned parent.x/y imperatively, which DESTROYS the
+                                // `x: model.wx` bindings. Restore them so snap-back and the
                                 // post-move rebuild (which write model.wx via set()) actually
                                 // move the tile. Without this the tile is frozen where dropped.
                                 parent.x = Qt.binding(function () { return model.wx })
                                 parent.y = Qt.binding(function () { return model.wy })
-                                var addr = model.address
-                                if (!moved) {   // a click, not a drag
+                                if (!wasMoved) {   // a click, not a drag
                                     root.draggingAddress = ""
                                     Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })')
                                     root.close(); return
                                 }
-                                // resolve drop target from the tile centre on the canvas
-                                var cx = parent.x + parent.width / 2, cy = parent.y + parent.height / 2
                                 var targetWs = Logic.hitWorkspace(root.boxes, cx, cy)
-                                var srcWs = model.wsid
-                                if (targetWs !== null && targetWs !== srcWs) {
+                                if (targetWs !== null && targetWs !== model.wsid) {
                                     root.draggingAddress = ""   // release grab; move will rebuild
                                     root._startMove(addr, targetWs)
                                 } else {
-                                    // snap back: clear grab and let a rebuild restore position
-                                    root.draggingAddress = ""; root.rebuild()
+                                    root.draggingAddress = ""; root.rebuild()   // snap back
                                 }
                             }
                         }
