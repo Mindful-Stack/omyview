@@ -46,10 +46,19 @@ TestCase {
         var r = Logic.layout({ monitors:[edp()],
             workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true},
                         {id:2,monitorName:"eDP-1",focused:false,occupied:false},
-                        {id:3,monitorName:"eDP-1",focused:false,occupied:false}],
+                        {id:3,monitorName:"eDP-1",focused:false,occupied:false},
+                        {id:4,monitorName:"eDP-1",focused:false,occupied:false}],
             windows:[], focusedMonitorName:"eDP-1", availW:600, params:params })
         compare(r.cell.cols, 4)                        // floor((600+8)/148)=4, capped at 5 (n/a)
-        verify(r.canvasSize.w <= 600)                  // a full row fits by construction
+        compare(r.canvasSize.w, 600)                    // full row: 4*144 + 3*8 = 600 = availW
+    }
+    // missing/invalid availW must not corrupt geometry into NaN — degraded but usable
+    function test_missing_availw_yields_safe_default() {
+        var r = Logic.layout({ monitors:[edp()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true}],
+            windows:[], focusedMonitorName:"eDP-1", params:params })
+        compare(r.cell.w, 140); compare(r.cell.cols, 5)
+        verify(isFinite(r.canvasSize.w)); verify(isFinite(r.canvasSize.h))
     }
     // degenerate: below minCellW => 1 column, cell clamped up to minCellW
     function test_degenerate_narrow_clamps_to_min() {

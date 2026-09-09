@@ -63,10 +63,15 @@ function layout(input) {
 
     // adaptive cell size — maxCols is a CAP, not a floor
     var gap = P.cellSpacing
+    // safe default when availW is missing/invalid: maxCols cells at minCellW with the
+    // (maxCols-1) gaps between them included, so cols resolves to maxCols and cw clamps
+    // to exactly minCellW — finite, valid geometry instead of NaN.
+    var availW = (typeof input.availW === "number" && input.availW > 0)
+        ? input.availW : (P.maxCols * P.minCellW + (P.maxCols - 1) * gap)
     var cols = Math.max(1, Math.min(P.maxCols,
-        Math.floor((input.availW + gap) / (P.minCellW + gap))))
+        Math.floor((availW + gap) / (P.minCellW + gap))))
     var cw = Math.max(P.minCellW, Math.min(P.maxCellW,
-        Math.floor((input.availW - (cols - 1) * gap) / cols)))
+        Math.floor((availW - (cols - 1) * gap) / cols)))
     var fmon = monByName[input.focusedMonitorName]
     var aspect = fmon ? _monLogical(fmon).w / _monLogical(fmon).h : (16 / 10)
     var ch = Math.round(cw / aspect)
