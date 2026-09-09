@@ -28,9 +28,15 @@ Item {
     readonly property int cornerRadius: Style.cornerRadius
 
     readonly property var params: ({
-        cellW: 160, cellH: 100, cellInset: 6, cellSpacing: 8,
-        rowSpacing: 12, rowLabelH: 16, minTileW: 8, minTileH: 6
+        maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 6, cellSpacing: 8,
+        rowSpacing: 12, headerH: 22, minTileW: 8, minTileH: 6
     })
+
+    property var groups: []
+    // Card interior logical width available to the canvas: panel.width (logical, not
+    // screen.width*dpr) minus the card's own padding and a little breathing room.
+    readonly property real availCanvasW: panel.width > 0 ? panel.width - 2 * card.pad - 16 : 1600
+    onAvailCanvasWChanged: if (opened) rebuild()
 
     function focusedScreen() {
         var mon = Hyprland.focusedMonitor, screens = Quickshell.screens || []
@@ -77,7 +83,7 @@ Item {
         }
         return { monitors: mons, workspaces: wss, windows: wins,
                  focusedMonitorName: Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : "",
-                 params: root.params }
+                 availW: root.availCanvasW, params: root.params }
     }
 
     // Reconcile the tiles ListModel in place (drag-safe: never touch the dragged address).
@@ -142,6 +148,7 @@ Item {
         root._clsByAddress = cmap
         var res = Logic.layout(input)
         root.boxes = res.boxes
+        root.groups = res.groups
         canvas.implicitWidth = res.canvasSize.w
         canvas.implicitHeight = res.canvasSize.h
         applyTiles(res.tiles)
@@ -153,11 +160,23 @@ Item {
             root.selectedIndex = res.boxes.length
                 ? Math.min(Math.max(root.selectedIndex, 0), res.boxes.length - 1) : -1
         }
+        ensureSelectedVisible()
     }
 
     function moveSel(delta) {
         if (!boxes.length) return
         selectedIndex = Math.max(0, Math.min(boxes.length - 1, selectedIndex + delta))
+        ensureSelectedVisible()
+    }
+
+    // Nudge the Flickable minimally so the selected box is fully inside the viewport.
+    function ensureSelectedVisible() {
+        if (selectedIndex < 0 || selectedIndex >= boxes.length) return
+        var b = boxes[selectedIndex]
+        if (b.y < flick.contentY) flick.contentY = b.y
+        else if (b.y + b.h > flick.contentY + flick.height) flick.contentY = b.y + b.h - flick.height
+        if (b.x < flick.contentX) flick.contentX = b.x
+        else if (b.x + b.w > flick.contentX + flick.width) flick.contentX = b.x + b.w - flick.width
     }
     function jump(id) {
         if (id === undefined || id === null) return
@@ -222,8 +241,13 @@ Item {
             border.width: 1
             border.color: root.borderColor
             readonly property int pad: 16
-            implicitWidth: canvas.implicitWidth + pad * 2
-            implicitHeight: canvas.implicitHeight + pad * 2 + hint.height + 8
+            // Cap the card to the screen so the Flickable viewport can be smaller than the
+            // content (`availCanvasW` already keeps canvas width <= this, minus the degenerate
+            // narrow-screen case, which is expected to 2-D scroll per the spec).
+            readonly property real maxCardW: panel.width > 0 ? panel.width - 16 : 1616
+            readonly property real maxCardH: panel.height > 0 ? panel.height - 64 : 900
+            implicitWidth: Math.min(canvas.implicitWidth + pad * 2, maxCardW)
+            implicitHeight: Math.min(canvas.implicitHeight + pad * 2 + hint.height + 8, maxCardH)
             MouseArea { anchors.fill: parent; onClicked: {} }
 
             Item {
@@ -243,89 +267,109 @@ Item {
                 }
             }
 
-            Item {
-                id: canvas
+            Flickable {
+                id: flick
                 x: card.pad; y: card.pad
-                implicitWidth: 100; implicitHeight: 100
+                width: card.width - card.pad * 2
+                height: card.height - card.pad * 2 - hint.height - 8
+                contentWidth: canvas.implicitWidth
+                contentHeight: canvas.implicitHeight
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
+                // A tile drag drives content scroll itself (edge auto-scroll, later task); keep
+                // Flickable's own press-drag gesture from fighting the tile's drag MouseArea.
+                interactive: !root.draggingAddress
 
-                // boxes layer
-                Repeater {
-                    model: root.opened ? root.boxes : []
-                    Rectangle {
-                        required property var modelData
-                        readonly property bool isSel: modelData.workspaceId === root.selectedId
-                        x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h
-                        radius: 6
-                        color: modelData.focused ? root.selBackground : "transparent"
-                        border.width: isSel ? 3 : (modelData.focused ? 2 : 1)
-                        border.color: isSel ? root.foreground
-                                            : (modelData.focused ? root.selBackground : root.borderColor)
-                        opacity: (modelData.occupied || modelData.focused) ? 1.0 : 0.5
+                // Content shrinking (windows/workspaces closing) must never leave the viewport
+                // scrolled past the new end.
+                onContentWidthChanged: flick.contentX = Math.max(0, Math.min(flick.contentX, flick.contentWidth - flick.width))
+                onContentHeightChanged: flick.contentY = Math.max(0, Math.min(flick.contentY, flick.contentHeight - flick.height))
 
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData.workspaceId === 10 ? "0" : String(modelData.workspaceId)
-                            color: modelData.focused ? root.selText : root.foreground
-                            opacity: 0.25; font.pixelSize: 22
-                        }
-                        MouseArea {   // click empty area of a workspace => jump
-                            anchors.fill: parent
-                            onClicked: root.jump(modelData.workspaceId)
+                Item {
+                    id: canvas
+                    x: 0; y: 0
+                    width: implicitWidth; height: implicitHeight
+                    implicitWidth: 100; implicitHeight: 100
+
+                    // boxes layer
+                    Repeater {
+                        model: root.opened ? root.boxes : []
+                        Rectangle {
+                            required property var modelData
+                            readonly property bool isSel: modelData.workspaceId === root.selectedId
+                            x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h
+                            radius: 6
+                            color: modelData.focused ? root.selBackground : "transparent"
+                            border.width: isSel ? 3 : (modelData.focused ? 2 : 1)
+                            border.color: isSel ? root.foreground
+                                                : (modelData.focused ? root.selBackground : root.borderColor)
+                            opacity: (modelData.occupied || modelData.focused) ? 1.0 : 0.5
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData.workspaceId === 10 ? "0" : String(modelData.workspaceId)
+                                color: modelData.focused ? root.selText : root.foreground
+                                opacity: 0.25; font.pixelSize: 22
+                            }
+                            MouseArea {   // click empty area of a workspace => jump
+                                anchors.fill: parent
+                                onClicked: root.jump(modelData.workspaceId)
+                            }
                         }
                     }
-                }
 
-                // tiles layer (siblings, above boxes)
-                Repeater {
-                    model: tilesModel
-                    WindowTile {
-                        required property var model
-                        x: model.wx; y: model.wy; width: model.ww; height: model.wh
-                        cls: model.cls
-                        handle: root.handleByAddress[model.address] || null
-                        capMode: "live"
-                        borderColor: root.borderColor; bg: root.background; fg: root.foreground
-                        MouseArea {
-                            id: dragArea
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton | Qt.MiddleButton
-                            drag.target: undefined
-                            property bool moved: false
-                            onPressed: function (m) {
-                                if (m.button !== Qt.LeftButton) return
-                                root.draggingAddress = model.address
-                                parent.z = 99999; moved = false
-                                drag.target = parent
-                            }
-                            onPositionChanged: if (drag.active) moved = true
-                            onReleased: function (m) {
-                                if (m.button === Qt.MiddleButton) {
-                                    Hyprland.dispatch('hl.dsp.window.close({ window = "address:' + model.address + '" })')
-                                    return
+                    // tiles layer (siblings, above boxes)
+                    Repeater {
+                        model: tilesModel
+                        WindowTile {
+                            required property var model
+                            x: model.wx; y: model.wy; width: model.ww; height: model.wh
+                            cls: model.cls
+                            handle: root.handleByAddress[model.address] || null
+                            capMode: "live"
+                            borderColor: root.borderColor; bg: root.background; fg: root.foreground
+                            MouseArea {
+                                id: dragArea
+                                anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                                drag.target: undefined
+                                property bool moved: false
+                                onPressed: function (m) {
+                                    if (m.button !== Qt.LeftButton) return
+                                    root.draggingAddress = model.address
+                                    parent.z = 99999; moved = false
+                                    drag.target = parent
                                 }
-                                drag.target = undefined; parent.z = 0
-                                var addr = model.address
-                                var wasMoved = moved
-                                // Capture the drop-point centre in canvas coords BEFORE
-                                // restoring bindings (rebinding resets parent.x/y to model.wx).
-                                var cx = parent.x + parent.width / 2
-                                var cy = parent.y + parent.height / 2
-                                // Dragging assigned parent.x/y imperatively, destroying the
-                                // `x: model.wx` bindings — restore them so snap-back and the
-                                // post-move rebuild actually reposition the tile.
-                                parent.x = Qt.binding(function () { return model.wx })
-                                parent.y = Qt.binding(function () { return model.wy })
-                                if (!wasMoved) {   // a click, not a drag
-                                    root.draggingAddress = ""
-                                    Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })')
-                                    root.close(); return
-                                }
-                                var targetWs = Logic.hitWorkspace(root.boxes, cx, cy)
-                                if (targetWs !== null && targetWs !== model.wsid) {
-                                    root.draggingAddress = ""   // release grab; move rebuilds
-                                    root._startMove(addr, targetWs)
-                                } else {
-                                    root.draggingAddress = ""; root.rebuild()   // snap back
+                                onPositionChanged: if (drag.active) moved = true
+                                onReleased: function (m) {
+                                    if (m.button === Qt.MiddleButton) {
+                                        Hyprland.dispatch('hl.dsp.window.close({ window = "address:' + model.address + '" })')
+                                        return
+                                    }
+                                    drag.target = undefined; parent.z = 0
+                                    var addr = model.address
+                                    var wasMoved = moved
+                                    // Capture the drop-point centre in canvas coords BEFORE
+                                    // restoring bindings (rebinding resets parent.x/y to model.wx).
+                                    var cx = parent.x + parent.width / 2
+                                    var cy = parent.y + parent.height / 2
+                                    // Dragging assigned parent.x/y imperatively, destroying the
+                                    // `x: model.wx` bindings — restore them so snap-back and the
+                                    // post-move rebuild actually reposition the tile.
+                                    parent.x = Qt.binding(function () { return model.wx })
+                                    parent.y = Qt.binding(function () { return model.wy })
+                                    if (!wasMoved) {   // a click, not a drag
+                                        root.draggingAddress = ""
+                                        Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })')
+                                        root.close(); return
+                                    }
+                                    var targetWs = Logic.hitWorkspace(root.boxes, cx, cy)
+                                    if (targetWs !== null && targetWs !== model.wsid) {
+                                        root.draggingAddress = ""   // release grab; move rebuilds
+                                        root._startMove(addr, targetWs)
+                                    } else {
+                                        root.draggingAddress = ""; root.rebuild()   // snap back
+                                    }
                                 }
                             }
                         }
