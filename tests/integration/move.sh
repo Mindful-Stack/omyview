@@ -27,20 +27,22 @@ misc {
 }
 CONF
 
-LIVE_SIG="${HYPRLAND_INSTANCE_SIGNATURE:-}"
 Hyprland -c "$TMP/hypr.conf" > "$TMP/hypr.log" 2>&1 &
 HYPR_PID=$!
 
-# Find the nested instance: newest signature that isn't the live one AND is responsive.
+# Select the instance that belongs to the process we just launched, matched by PID via
+# `hyprctl instances`. Never pick "any instance except the live one" — that could target a
+# pre-existing nested session, or (if the live signature were unset) the main session, and
+# the cleanup trap would then dispatch `exit` into it. NESTED stays empty until a PID match
+# is confirmed, so a failed launch never leaves the trap pointing at someone else's compositor.
 for _ in $(seq 1 60); do
-  for s in $(ls -t "$XDG_RUNTIME_DIR/hypr" 2>/dev/null); do
-    [[ "$s" == "$LIVE_SIG" ]] && continue
-    if HYPRLAND_INSTANCE_SIGNATURE="$s" hyprctl monitors -j >/dev/null 2>&1; then NESTED="$s"; break; fi
-  done
-  [[ -n "$NESTED" ]] && break
+  NESTED=$(hyprctl instances -j 2>/dev/null \
+    | jq -r --arg p "$HYPR_PID" '.[] | select(.pid == ($p | tonumber)) | .instance' | head -1)
+  [[ -n "$NESTED" ]] && HYPRLAND_INSTANCE_SIGNATURE="$NESTED" hyprctl monitors -j >/dev/null 2>&1 && break
+  NESTED=""
   sleep 0.25
 done
-[[ -n "$NESTED" ]] || { echo "FAIL: nested Hyprland did not come up"; sed -n '1,40p' "$TMP/hypr.log"; exit 1; }
+[[ -n "$NESTED" ]] || { echo "FAIL: nested Hyprland (pid $HYPR_PID) did not come up"; sed -n '1,40p' "$TMP/hypr.log"; exit 1; }
 
 hc() { HYPRLAND_INSTANCE_SIGNATURE="$NESTED" hyprctl "$@"; }
 
