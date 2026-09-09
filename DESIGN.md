@@ -94,3 +94,32 @@ jump to one — keyboard or mouse.
 - App-icon resolution from app id / class (find the shell's icon-lookup helper).
 - Which dispatch form actually switches workspace from an overlay (`Hyprland.dispatch`
   vs shelling `hyprctl dispatch` with the lua `hl.dsp.focus` form the bar widget uses).
+
+---
+
+## v2 — live previews + drag-and-drop (2026-09-09)
+
+v2 replaces the icon mini-map with live window thumbnails and adds drag-and-drop of windows
+between workspaces. See `docs/specs/2026-09-08-omyview-previews-drag-drop-design.md` (design)
+and `docs/plans/2026-09-08-v2-previews-drag-drop.md` (task-by-task build).
+
+- **Shared canvas, per-monitor rows kept.** The card holds one non-clipped canvas with two
+  sibling layers: workspace **boxes** (drop targets) and absolutely-positioned window **tiles**.
+  Tiles are canvas-level siblings so one can be dragged across the whole surface onto any box.
+- **Pure logic seam (`logic.js`).** All coordinate math, monitor-row ordering, the usable-rect
+  window→tile mapping (one reference rect per monitor: `size − reserved`, letterboxed +
+  centered; fullscreen fills it, others clip to it), `hitWorkspace`, and the address-keyed
+  reconcile diff live in a dependency-free `.pragma library` module — unit-tested offscreen via
+  `qmltestrunner` (Tier 1 CI). `Overview.qml` only wires Quickshell singletons to it.
+- **Live previews (`WindowTile.qml`).** A `ScreencopyView` fed the wl `Toplevel` handle,
+  resolved by joining `ToplevelManager.toplevels[].HyprlandToplevel.address` to the window's
+  Hyprland address. `capMode` (`live`/`snapshot`/`icon`) with an icon fallback; captures run
+  only while open. Cross-output live capture verified on Hyprland 0.56.2.
+- **Drag-safe reconcile.** The tiles model is an address-keyed `ListModel` reconciled in place
+  (never wholesale-reassigned), and the dragged address is never removed/replaced mid-drag —
+  so the pointer grab and its `ScreencopyView` survive refreshes.
+- **Silent move + reconcile.** On drop, `hl.dsp.window.move({ workspace, follow = false, … })`
+  (typed Quickshell dispatch — needs a recent Hyprland; not `hyprctl`-invocable, see Tier 2),
+  then `refreshToplevels()` and a bounded reconcile so the tile settles on real geometry.
+- **Testing.** Tier 1 numeric unit tests (`logic.js`) in CI; Tier 2 nested-Hyprland integration
+  (`tests/integration/move.sh`) asserts the silent-move semantics on a real, isolated Hyprland.

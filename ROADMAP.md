@@ -1,9 +1,11 @@
 # Omyview — roadmap / next steps
 
-**Status:** v1 shipped and in daily use (2026-09-07). Overlay on SUPER+P; per-monitor
-rows; window mini-map with app icons; number/arrow/Enter/click selection; `mode: full`.
-Now maintained as a standalone public repo (`Mindful-Stack/omyview`). See `DESIGN.md`
-(what/why) and `PLAN.md` (how it was built + the verified gotchas).
+**Status:** **v2 shipped (2026-09-09).** Overlay on SUPER+P; per-monitor rows; **live window
+thumbnails** (Quickshell `ScreencopyView`); **drag-and-drop of windows between workspaces**
+(silent move); number/arrow/Enter selection; click-to-focus / middle-click-close. Coordinate
+math + reconcile in a unit-tested `logic.js` (Tier 1 CI); Tier 2 nested-Hyprland integration.
+Maintained as a standalone public repo (`Mindful-Stack/omyview`). See `DESIGN.md` (what/why),
+`docs/specs/` + `docs/plans/` (the v2 design + build), and `PLAN.md` (v1 build log).
 
 ## Next steps
 
@@ -21,19 +23,25 @@ stacked rows. v2: render the overlay on **every** screen at once, each screen sh
 own workspaces prominent and the **other** monitor's section **dimmed**. Likely a
 `Variants`/per-screen `PanelWindow` keyed on `Quickshell.screens`.
 
-### 3. v2 — live window thumbnails (screencopy)
-Replace/augment the icon mini-map with real scaled window pixels via Quickshell
-screencopy. Zero idle cost (captures only while open). Risk: depends on Hyprland's
-toplevel-export protocol cooperating with Quickshell — prototype before committing.
+### 3. ~~v2 — live window thumbnails (screencopy)~~ ✅ done (2026-09-09)
+Real scaled window pixels via Quickshell `ScreencopyView`, captures only while open. The
+toplevel-export path cooperates with Quickshell on Hyprland 0.56.2 — verified live, including
+**cross-output** capture (a window on another monitor renders live). Icon fallback remains.
+Open sub-item: a window on a workspace hidden on **every** monitor (case B) wasn't exercised;
+if such tiles come back black, key `WindowTile.capMode` to workspace visibility (icon/snapshot).
 
-### 4. Polish / accuracy
+### 4. ~~v2 — drag-and-drop between workspaces~~ ✅ done (2026-09-09)
+Drag a window tile onto another workspace box → `hl.dsp.window.move(follow=false)` (silent).
+Overview stays open; post-move `refreshToplevels()` reconcile with bounded recovery.
+
+### 5. Polish / accuracy
 - [ ] Better app-icon resolution: current is `Quickshell.iconPath(class.toLowerCase())`
       with a letter fallback; reverse-DNS or mismatched classes fall back to a letter.
       Improve with `DesktopEntries` heuristic lookup or a class→icon map.
-- [ ] Optional: subtract each monitor's reserved bar area (`monitor.reserved`) from the
-      mapped mini-map region (v1 maps the full monitor logical area, ignoring the ~26px bar).
+- [x] Subtract each monitor's reserved bar area (`monitor.reserved`) — done: the v2 usable-rect
+      model maps against `monitor size − reserved`.
 
-### 5. ~~Extract to a standalone repo~~ ✅ done
+### 6. ~~Extract to a standalone repo~~ ✅ done
 Extracted from the author's dotfiles into `Mindful-Stack/omyview` (2026-09-07). Installed
 per-machine with `omarchy plugin add https://github.com/Mindful-Stack/omyview.git --enable`
 and updated with `omarchy plugin update se.mindfulstack.omyview`. See `README.md` for the

@@ -2,25 +2,29 @@
 
 A workspace overview overlay for [Omarchy](https://omarchy.org)'s Quickshell shell.
 Press **SUPER+P** to get a visual, spatial overview of every workspace — grouped by
-monitor, with a mini-map of each window in its real position — and jump to any workspace
-by keyboard or mouse.
+monitor, with a **live thumbnail** of each window in its real position — then jump to a
+workspace, or **drag a window onto another workspace** to move it there.
 
 Built to replace the dead `walker`-based `workspace-picker.sh` after Omarchy Quattro
 removed `walker`.
 
 ## Features
 
-- **Per-monitor rows.** Workspaces are grouped into one boxed row per monitor, derived
-  live from Hyprland's workspace→monitor mapping. Docked shows two rows; undocked collapses
-  to one.
-- **Window mini-map.** Each workspace cell draws its windows as rounded boxes at their real
-  relative position and size, with the app icon (falls back to the first letter of the
-  window class).
+- **Live window previews.** Each window is a real, live thumbnail of its contents (via
+  Quickshell's `ScreencopyView`), drawn at its true relative position and size, with the app
+  icon as fallback. Captures only run while the overview is open.
+- **Drag-and-drop between workspaces.** Grab a window and drop it on another workspace box to
+  move it there — a *silent* move that doesn't switch you to that workspace. The overview
+  stays open so you can keep organizing.
+- **Per-monitor rows.** Workspaces are grouped into one boxed row per monitor, derived live
+  from Hyprland's workspace→monitor mapping. Docked shows a row per monitor; undocked
+  collapses to one.
 - **Fast selection.** Number keys jump (`1`–`9`, `0` = 10), arrow keys move the highlight +
-  `Enter`, mouse click, and hover-to-highlight. `Esc` or a click outside closes.
+  `Enter`, click a window to focus it, middle-click to close it. `Esc` or a click outside closes.
 - **Theme-aware.** Pulls the active Omarchy theme's colors and fonts, so it matches the bar
   and re-themes automatically.
-- **Zero idle cost.** It's an on-demand overlay — nothing runs until you summon it.
+- **Zero idle cost.** It's an on-demand overlay — nothing (including captures) runs until you
+  summon it.
 
 ---
 
@@ -29,8 +33,11 @@ removed `walker`.
 ### Requirements
 
 - Omarchy **Quattro (4.x)** or newer, with the Quickshell shell (`omarchy-shell` on your
-  `PATH` — it ships with Omarchy).
-- Hyprland (developed against 0.56.2).
+  `PATH` — it ships with Omarchy). Quickshell must provide `Quickshell.Wayland`
+  `ScreencopyView` + `ToplevelManager` (0.3.x does).
+- A **recent Hyprland** (developed against 0.56.2). Omyview uses Hyprland's typed `hl.dsp.*`
+  dispatchers for focus/move/close, so it needs a Hyprland new enough to have them (~0.51+);
+  on older versions those actions would silently do nothing.
 
 ### 1. Add the plugin
 
@@ -76,14 +83,17 @@ hyprctl reload
 
 Press **SUPER+P**. The overlay opens on your focused monitor.
 
-| Key / action        | Effect                                    |
-| ------------------- | ----------------------------------------- |
-| **SUPER+P**         | Toggle the overlay (open and close)       |
-| **1–9, 0**          | Jump to that workspace (`0` = 10)         |
-| **← → ↑ ↓**         | Move the highlight                        |
-| **Enter**           | Jump to the highlighted workspace         |
-| **Click / hover**   | Jump to / highlight a cell                |
-| **Esc / click-out** | Close                                     |
+| Key / action             | Effect                                                    |
+| ------------------------ | --------------------------------------------------------- |
+| **SUPER+P**              | Toggle the overlay (open and close)                       |
+| **1–9, 0**               | Jump to that workspace (`0` = 10)                         |
+| **← → ↑ ↓**              | Move the highlight                                        |
+| **Enter**                | Jump to the highlighted workspace                         |
+| **Drag a window**        | Drop it on another workspace box to move it there (silent)|
+| **Click a window**       | Focus that window and close the overview                  |
+| **Middle-click a window**| Close that window                                         |
+| **Click an empty box**   | Jump to that workspace                                    |
+| **Esc / click-out**      | Close                                                     |
 
 ### Updating
 
@@ -113,13 +123,13 @@ omarchy plugin remove se.mindfulstack.omyview
 
 ## Configuration
 
-`Overview.qml` exposes a `mode` property near the top (default `"full"`):
+`Overview.qml` exposes a `params` object near the top — cell size and spacing for the
+mini-maps (`cellW`, `cellH`, `cellInset`, `cellSpacing`, `rowSpacing`, `rowLabelH`, and the
+`minTileW`/`minTileH` clamps). Adjust these to make the tiles larger/denser.
 
-- `"full"` — every persistent workspace per monitor, empties dimmed (stable positions).
-- `"occupied"` — only workspaces that have windows (plus the focused one).
-
-Edit the value, then run `omarchy restart shell` (see the note in Contributing about why a
-plain rescan isn't enough).
+Every workspace is shown (empties dimmed), and each window renders as a live thumbnail with
+an app-icon fallback. After editing, run `omarchy restart shell` (see the note in Contributing
+about why a plain rescan isn't enough).
 
 ---
 
