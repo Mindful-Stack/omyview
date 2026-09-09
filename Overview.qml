@@ -425,8 +425,11 @@ Item {
                                         if (wbox && wmon) {
                                             var p = Logic.dropToWindowPos(dropX, dropY, wbox, wmon, root.params)
                                             root.draggingAddress = ""
-                                            Hyprland.dispatch('hl.dsp.window.move({ x = ' + p.x + ', y = ' + p.y +
-                                                              ', window = "address:' + addr + '" })')
+                                            // Classic movewindowpixel takes EXACT global pixels (verified: lands
+                                            // at the given coords). hl.dsp.window.move({x,y}) mis-scaled pixels as
+                                            // percent → corner clamp, so use the deterministic pixel dispatcher here.
+                                            Hyprland.dispatch('movewindowpixel exact ' + p.x + ' ' + p.y +
+                                                              ',address:' + addr)
                                             if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
                                             root._reconcileTries = 0; reconcileTimer.restart()
                                         } else { root.draggingAddress = ""; root.rebuild() }
