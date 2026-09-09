@@ -170,9 +170,10 @@ Item {
         ensureSelectedVisible()
     }
 
-    function moveSel(delta) {
+    function selectByNav(dir) {
         if (!boxes.length) return
-        selectedIndex = Math.max(0, Math.min(boxes.length - 1, selectedIndex + delta))
+        var i = selectedIndex < 0 ? 0 : selectedIndex
+        selectedIndex = Logic.navigate(boxes, i, dir)
         ensureSelectedVisible()
     }
 
@@ -266,8 +267,10 @@ Item {
                     if (e.key === Qt.Key_Escape) { root.close(); e.accepted = true }
                     else if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) { root.jump(e.key - Qt.Key_0); e.accepted = true }
                     else if (e.key === Qt.Key_0) { root.jump(10); e.accepted = true }
-                    else if (e.key === Qt.Key_Left || e.key === Qt.Key_Up) { root.moveSel(-1); e.accepted = true }
-                    else if (e.key === Qt.Key_Right || e.key === Qt.Key_Down) { root.moveSel(1); e.accepted = true }
+                    else if (e.key === Qt.Key_Left) { root.selectByNav("left"); e.accepted = true }
+                    else if (e.key === Qt.Key_Right) { root.selectByNav("right"); e.accepted = true }
+                    else if (e.key === Qt.Key_Up) { root.selectByNav("up"); e.accepted = true }
+                    else if (e.key === Qt.Key_Down) { root.selectByNav("down"); e.accepted = true }
                     else if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {
                         if (root.selectedId >= 0) root.jump(root.selectedId); e.accepted = true
                     }

@@ -253,4 +253,30 @@ TestCase {
         compare(t.w, params.minTileW)                                // min-clamped
         verify(t.x + t.w <= b.x + b.w - params.cellInset + 0.01)      // stays in the inset
     }
+
+    function indexOfWs(r, id) {
+        for (var i = 0; i < r.boxes.length; i++) if (r.boxes[i].workspaceId === id) return i
+        return -1
+    }
+    // 10 workspaces => two rows of 5. Arrow nav must move by ROW vertically and by column
+    // horizontally — Down on ws3 lands on ws8 (the cell directly below), not ws4.
+    function test_arrow_nav_2d_grid() {
+        var wss = []; for (var i = 1; i <= 10; i++) wss.push({ id:i, monitorName:"eDP-1", focused:i===1, occupied:true })
+        var r = Logic.layout({ monitors:[edp()], workspaces:wss, windows:[],
+                               focusedMonitorName:"eDP-1", availW:1632, params:params })
+        var i3 = indexOfWs(r, 3)
+        // Down from 3 -> 8 (directly below); Up from there -> back to 3
+        var down = Logic.navigate(r.boxes, i3, "down")
+        compare(r.boxes[down].workspaceId, 8)
+        compare(r.boxes[Logic.navigate(r.boxes, down, "up")].workspaceId, 3)
+        // Right/Left stay in the row
+        compare(r.boxes[Logic.navigate(r.boxes, i3, "right")].workspaceId, 4)
+        compare(r.boxes[Logic.navigate(r.boxes, i3, "left")].workspaceId, 2)
+        // End of row: Right from ws5 has no box to its right -> unchanged
+        var i5 = indexOfWs(r, 5)
+        compare(Logic.navigate(r.boxes, i5, "right"), i5)
+        // Down from ws10 (bottom row) -> no box below -> unchanged
+        var i10 = indexOfWs(r, 10)
+        compare(Logic.navigate(r.boxes, i10, "down"), i10)
+    }
 }

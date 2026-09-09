@@ -117,6 +117,29 @@ function layout(input) {
              groups: groups, cell: { w: cw, h: ch, cols: cols } }
 }
 
+function _center(b) { return { x: b.x + b.w / 2, y: b.y + b.h / 2 } }
+
+// Spatial arrow-key navigation over the wrapped grid. dir: "left"|"right"|"up"|"down".
+// Left/right move within the same row (vertical overlap required); up/down pick the nearest
+// box above/below, weighting vertical distance and preferring the closest column. Returns the
+// new index, or the current index when there is no box in that direction.
+function navigate(boxes, currentIndex, dir) {
+    if (currentIndex < 0 || currentIndex >= boxes.length) return currentIndex
+    var c = _center(boxes[currentIndex]), rowH = boxes[currentIndex].h
+    var best = -1, bestCost = Infinity
+    for (var i = 0; i < boxes.length; i++) {
+        if (i === currentIndex) continue
+        var p = _center(boxes[i]), dx = p.x - c.x, dy = p.y - c.y, cost
+        if (dir === "right") { if (dx <= 0 || Math.abs(dy) > rowH / 2) continue; cost = dx + Math.abs(dy) * 4 }
+        else if (dir === "left") { if (dx >= 0 || Math.abs(dy) > rowH / 2) continue; cost = -dx + Math.abs(dy) * 4 }
+        else if (dir === "down") { if (dy <= 0) continue; cost = dy + Math.abs(dx) * 0.5 }
+        else if (dir === "up") { if (dy >= 0) continue; cost = -dy + Math.abs(dx) * 0.5 }
+        else continue
+        if (cost < bestCost) { bestCost = cost; best = i }
+    }
+    return best >= 0 ? best : currentIndex
+}
+
 function hitWorkspace(boxes, px, py) {
     for (var i = 0; i < boxes.length; i++) {
         var b = boxes[i]
