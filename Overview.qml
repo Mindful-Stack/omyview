@@ -76,7 +76,7 @@ Item {
             for (var t = 0; t < tls.length; t++) {
                 var o = tls[t] ? tls[t].lastIpcObject : null
                 if (!o || !o.at || !o.size || !o.address) continue
-                wins.push({ address: o.address, cls: o["class"] || "",
+                wins.push({ address: o.address, cls: o["class"] || "", title: o.title || "",
                             ax: o.at[0], ay: o.at[1], sw: o.size[0], sh: o.size[1],
                             workspaceId: ws.id, floating: !!o.floating, fullscreen: !!o.fullscreen })
             }
@@ -123,13 +123,14 @@ Item {
         for (var a = 0; a < d.adds.length; a++) {
             var t = d.adds[a]
             tilesModel.append({ address: t.address, wx: t.x, wy: t.y, ww: t.w, wh: t.h,
-                                cls: clsFor(t.address), wsid: t.workspaceId })
+                                cls: clsFor(t.address), title: titleFor(t.address), wsid: t.workspaceId })
         }
         for (var u = 0; u < d.updates.length; u++) {
             var tu = d.updates[u]
             if (root.draggingAddress === tu.address) continue   // grab is authoritative
             var iu = indexOf(tu.address)
-            if (iu >= 0) tilesModel.set(iu, { wx: tu.x, wy: tu.y, ww: tu.w, wh: tu.h, wsid: tu.workspaceId })
+            if (iu >= 0) tilesModel.set(iu, { wx: tu.x, wy: tu.y, ww: tu.w, wh: tu.h,
+                                              title: titleFor(tu.address), wsid: tu.workspaceId })
         }
         for (var rmi = 0; rmi < d.removes.length; rmi++) {
             if (root.draggingAddress === d.removes[rmi]) continue // cancel handled elsewhere
@@ -138,14 +139,20 @@ Item {
     }
 
     property var _clsByAddress: ({})
+    property var _titleByAddress: ({})
     function clsFor(addr) { return root._clsByAddress[addr] || "" }
+    function titleFor(addr) { return root._titleByAddress[addr] || "" }
 
     function rebuild() {
         buildHandles()
         var input = buildInput()
-        var cmap = {}
-        for (var i = 0; i < input.windows.length; i++) cmap[input.windows[i].address] = input.windows[i].cls
+        var cmap = {}, tmap = {}
+        for (var i = 0; i < input.windows.length; i++) {
+            cmap[input.windows[i].address] = input.windows[i].cls
+            tmap[input.windows[i].address] = input.windows[i].title
+        }
         root._clsByAddress = cmap
+        root._titleByAddress = tmap
         var res = Logic.layout(input)
         root.boxes = res.boxes
         root.groups = res.groups
@@ -349,6 +356,8 @@ Item {
                             required property var model
                             x: model.wx; y: model.wy; width: model.ww; height: model.wh
                             cls: model.cls
+                            title: model.title
+                            dragging: root.draggingAddress === model.address
                             handle: root.handleByAddress[model.address] || null
                             capMode: "live"
                             borderColor: root.borderColor; bg: root.background; fg: root.foreground
