@@ -165,21 +165,39 @@ Item {
     }
     function open() {
         if (typeof Hyprland.refreshMonitors === "function") Hyprland.refreshMonitors()
-        if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
-        rebuild(); refreshTimer.restart()
+        rebuild()          // instant paint from current data
+        scheduleRebuild()  // then settle as fresh toplevel geometry lands
         Qt.callLater(function () { keyCatcher.forceActiveFocus() })
     }
-    function close() { root.draggingAddress = ""; reconcileTimer.stop(); opened = false }
+    function close() { root.draggingAddress = ""; reconcileTimer.stop(); settleTimer.stop(); opened = false }
     function toggle() { if (opened) close(); else open() }
 
-    Timer { id: refreshTimer; interval: 80; onTriggered: if (root.opened) root.rebuild() }
+    // Ask Hyprland for fresh client data, then rebuild a few times over ~300ms so a window
+    // opened while the overview is visible appears once its async geometry arrives — a single
+    // rebuild here would read stale/empty `lastIpcObject` geometry. Bursts of events coalesce
+    // into one settle window (the tick counter resets on each schedule).
+    function scheduleRebuild() {
+        if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
+        if (typeof Hyprland.refreshWorkspaces === "function") Hyprland.refreshWorkspaces()
+        settleTimer.ticks = 0
+        settleTimer.restart()
+    }
+    Timer {
+        id: settleTimer
+        interval: 60; repeat: true
+        property int ticks: 0
+        onTriggered: {
+            if (root.opened && !root.draggingAddress) root.rebuild()
+            if (++ticks >= 5) stop()
+        }
+    }
     ListModel { id: tilesModel }
 
-    // Rebuild when toplevels/workspaces change while open (fresh handles + geometry).
+    // Window/workspace changes while open: refresh + settle (never an immediate stale rebuild).
     Connections {
         target: Hyprland
-        function onRawEvent() { if (root.opened && !root.draggingAddress) root.rebuild() }
+        function onRawEvent() { if (root.opened && !root.draggingAddress) root.scheduleRebuild() }
     }
 
     PanelWindow {

@@ -25,10 +25,10 @@ own workspaces prominent and the **other** monitor's section **dimmed**. Likely 
 
 ### 3. ~~v2 — live window thumbnails (screencopy)~~ ✅ done (2026-09-09)
 Real scaled window pixels via Quickshell `ScreencopyView`, captures only while open. The
-toplevel-export path cooperates with Quickshell on Hyprland 0.56.2 — verified live, including
-**cross-output** capture (a window on another monitor renders live). Icon fallback remains.
-Open sub-item: a window on a workspace hidden on **every** monitor (case B) wasn't exercised;
-if such tiles come back black, key `WindowTile.capMode` to workspace visibility (icon/snapshot).
+toplevel-export path cooperates with Quickshell on Hyprland 0.56.2 — verified live across all
+cases: occluded, **cross-output** (a window on another monitor renders live), and **hidden
+workspaces** (a workspace not shown on any monitor still captures — case B confirmed). So
+`capMode` stays `live` everywhere; the icon fallback remains for windows without a handle.
 
 ### 4. ~~v2 — drag-and-drop between workspaces~~ ✅ done (2026-09-09)
 Drag a window tile onto another workspace box → `hl.dsp.window.move(follow=false)` (silent).
