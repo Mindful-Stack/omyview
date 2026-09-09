@@ -318,6 +318,30 @@ Item {
                         }
                     }
 
+                    // monitor chips layer (siblings, above boxes) — one per group, focused
+                    // monitor's chip accented so multiple monitors are always distinguishable.
+                    Repeater {
+                        model: root.opened ? root.groups : []
+                        Rectangle {
+                            required property var modelData
+                            x: modelData.x; y: modelData.y
+                            height: modelData.headerH - 4
+                            radius: 4
+                            readonly property color accent: root.selBackground
+                            color: modelData.focused ? accent : "transparent"
+                            border.width: 1
+                            border.color: modelData.focused ? accent : root.borderColor
+                            implicitWidth: chipText.implicitWidth + 12
+                            Text {
+                                id: chipText; anchors.centerIn: parent
+                                text: modelData.monitorName
+                                color: modelData.focused ? root.selText : root.foreground
+                                opacity: modelData.focused ? 1.0 : 0.6
+                                font.pixelSize: 11
+                            }
+                        }
+                    }
+
                     // tiles layer (siblings, above boxes)
                     Repeater {
                         model: tilesModel
