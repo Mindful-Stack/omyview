@@ -103,6 +103,9 @@ prior scroll offset can't leave the viewport past the end.
 - `input` gains `availW` (number, logical px).
 - `params` gains `maxCols`, `minCellW`, `maxCellW`; drops the fixed `cellW`/`cellH` (now derived);
   keeps `cellInset, cellSpacing, rowSpacing, headerH (was rowLabelH), minTileW, minTileH`.
+- `layout()` **output** gains `cell: { w, h, cols }` (the computed size) and
+  `groups: [{ monitorName, x, y, headerH, focused }]` (one per monitor group, for the chips in
+  Feature 2); boxes gain `monFocused`. `boxes`, `tiles`, `canvasSize` stay as v2.
 - **Tier 1 tests** updated: existing box/tile cases re-expressed against computed `cw/ch`; new
   cases for (a) 5-across sizing from a wide `availW` with the clamps, (b) wrap at >`cols` into
   sub-rows, (c) `canvasSize` with wrapping, (d) `_tileRect` using `box.w/h`, and (e) **a narrow
