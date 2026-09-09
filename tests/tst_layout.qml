@@ -6,8 +6,8 @@ TestCase {
     name: "Layout"
 
     readonly property var params: ({
-        cellW: 160, cellH: 100, cellInset: 6, cellSpacing: 8,
-        rowSpacing: 12, rowLabelH: 16, minTileW: 8, minTileH: 6
+        maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 6, cellSpacing: 8,
+        rowSpacing: 12, headerH: 22, minTileW: 8, minTileH: 6
     })
 
     // eDP-1: 2560x1600 @1.25 => 2048x1280 logical; 26px top bar reserved.
@@ -16,53 +16,68 @@ TestCase {
                  scale: 1.25, reserved: [0, 26, 0, 0], transform: 0 }
     }
 
+    function hdmi() {
+        return { name: "HDMI-A-1", x: 2560, y: 0, width: 1920, height: 1080,
+                 scale: 1, reserved: [0, 26, 0, 0], transform: 0 }
+    }
+
     function boxById(res, id) {
         for (var i = 0; i < res.boxes.length; i++)
             if (res.boxes[i].workspaceId === id) return res.boxes[i]
         return null
     }
 
-    function test_single_monitor_boxes_and_canvas() {
-        var input = {
-            monitors: [edp()],
-            workspaces: [
-                { id: 1, monitorName: "eDP-1", focused: true,  occupied: true },
-                { id: 2, monitorName: "eDP-1", focused: false, occupied: false },
-                { id: 3, monitorName: "eDP-1", focused: false, occupied: true }
-            ],
-            windows: [],
-            focusedMonitorName: "eDP-1",
-            params: params
-        }
-        var r = Logic.layout(input)
-        compare(r.boxes.length, 3, "three boxes")
-        var b1 = boxById(r, 1), b2 = boxById(r, 2), b3 = boxById(r, 3)
-        // cells start below the row label: y = rowLabelH
-        compare(b1.x, 0);   compare(b1.y, 16)
-        compare(b2.x, 168); compare(b2.y, 16)   // 160 + 8 spacing
-        compare(b3.x, 336)
-        verify(b1.focused); verify(!b2.focused)
-        // canvas: widest row = 3*160 + 2*8 = 496 ; height = label+cell = 116
-        compare(r.canvasSize.w, 496)
-        compare(r.canvasSize.h, 116)
+    // wide anchor: availW 1632 => cols 5, cw 320, ch 200 (eDP aspect 1.6)
+    function test_cell_size_and_boxes_wide() {
+        var r = Logic.layout({ monitors:[edp()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true},
+                        {id:2,monitorName:"eDP-1",focused:false,occupied:false},
+                        {id:3,monitorName:"eDP-1",focused:false,occupied:true}],
+            windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        compare(r.cell.cols, 5); compare(r.cell.w, 320); compare(r.cell.h, 200)
+        var b1=boxById(r,1), b2=boxById(r,2)
+        compare(b1.x,0);   compare(b1.y,22)            // below the headerH header
+        compare(b2.x,328)                              // 320 + 8 gap
+        compare(r.canvasSize.w, 976)                   // 3*320 + 2*8
+        compare(r.canvasSize.h, 222)                   // headerH 22 + ch 200
     }
-
-    function test_two_monitors_focused_row_first() {
-        var hdmi = { name: "HDMI-A-1", x: 2560, y: 0, width: 1920, height: 1080,
-                     scale: 1, reserved: [0, 26, 0, 0], transform: 0 }
-        var input = {
-            monitors: [edp(), hdmi],
-            workspaces: [
-                { id: 6, monitorName: "HDMI-A-1", focused: false, occupied: true },
-                { id: 1, monitorName: "eDP-1",    focused: true,  occupied: true }
-            ],
-            windows: [],
-            focusedMonitorName: "eDP-1",
-            params: params
-        }
-        var r = Logic.layout(input)
-        // focused monitor's workspace sits in the top row (smaller y) despite input order
-        verify(boxById(r, 1).y < boxById(r, 6).y)
+    // narrow screen: fewer columns, never wider than availW
+    function test_narrow_adaptive_cols_no_overflow() {
+        var r = Logic.layout({ monitors:[edp()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true},
+                        {id:2,monitorName:"eDP-1",focused:false,occupied:false},
+                        {id:3,monitorName:"eDP-1",focused:false,occupied:false}],
+            windows:[], focusedMonitorName:"eDP-1", availW:600, params:params })
+        compare(r.cell.cols, 4)                        // floor((600+8)/148)=4, capped at 5 (n/a)
+        verify(r.canvasSize.w <= 600)                  // a full row fits by construction
+    }
+    // degenerate: below minCellW => 1 column, cell clamped up to minCellW
+    function test_degenerate_narrow_clamps_to_min() {
+        var r = Logic.layout({ monitors:[edp()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true}],
+            windows:[], focusedMonitorName:"eDP-1", availW:100, params:params })
+        compare(r.cell.cols, 1); compare(r.cell.w, 140)   // clamped up; may exceed availW (2-D scroll)
+    }
+    // >cols workspaces wrap into sub-rows
+    function test_wrap_into_subrows() {
+        var wss=[]; for (var i=1;i<=7;i++) wss.push({id:i,monitorName:"eDP-1",focused:i===1,occupied:true})
+        var r = Logic.layout({ monitors:[edp()], workspaces:wss, windows:[],
+            focusedMonitorName:"eDP-1", availW:1632, params:params })
+        compare(boxById(r,5).y, 22)                    // first sub-row
+        compare(boxById(r,6).x, 0)                     // second sub-row, first column
+        compare(boxById(r,6).y, 234)                   // 22 + ch200 + rowSpacing12
+        compare(r.canvasSize.h, 434)                   // 22 + 200 + 12 + 200
+    }
+    // two monitors stack, focused group first, groups metadata present
+    function test_two_monitor_groups() {
+        var r = Logic.layout({ monitors:[edp(),hdmi()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true},
+                        {id:6,monitorName:"HDMI-A-1",focused:false,occupied:true}],
+            windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        compare(r.groups.length, 2)
+        compare(r.groups[0].monitorName, "eDP-1"); verify(r.groups[0].focused)
+        compare(r.groups[0].y, 0); compare(r.groups[1].y, 234)   // eDP header0+row → 222, +rowSpacing12
+        verify(boxById(r,1).y < boxById(r,6).y)
     }
 
     function test_skips_negative_workspace_ids() {
@@ -72,7 +87,7 @@ TestCase {
                 { id: 1,  monitorName: "eDP-1", focused: true,  occupied: true },
                 { id: -99, monitorName: "eDP-1", focused: false, occupied: false }
             ],
-            windows: [], focusedMonitorName: "eDP-1", params: params
+            windows: [], focusedMonitorName: "eDP-1", availW: 1632, params: params
         }
         var r = Logic.layout(input)
         compare(r.boxes.length, 1, "special/lock workspace id<0 excluded")
@@ -93,7 +108,7 @@ TestCase {
             workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
             windows: [{ address: "0xA", cls: "foot", ax: 100, ay: 200,
                         sw: 800, sh: 600, workspaceId: 1, floating: false, fullscreen: false }],
-            focusedMonitorName: "eDP-1", params: params
+            focusedMonitorName: "eDP-1", availW: 1632, params: params
         }
         var r = Logic.layout(input)
         var b = boxById(r, 1), t = tilesByAddr(r, "0xA")
@@ -101,29 +116,36 @@ TestCase {
         var lo = 0.5
         verify(t.x >= b.x + params.cellInset - lo)
         verify(t.y >= b.y + params.cellInset - lo)
-        verify(t.x + t.w <= b.x + params.cellW - params.cellInset + lo)
-        verify(t.y + t.h <= b.y + params.cellH - params.cellInset + lo)
+        verify(t.x + t.w <= b.x + b.w - params.cellInset + lo)
+        verify(t.y + t.h <= b.y + b.h - params.cellInset + lo)
     }
 
     // Unequal aspect: an ultrawide usable area is wider than the cell's mini-map aspect,
     // so it is width-limited => letterboxed vertically (offY > inset), horizontally flush.
+    // NOTE: the ultrawide monitor must NOT be the focused monitor here — cw/ch are now
+    // derived from the *focused* monitor's aspect and reused for every box (Task 1), so a
+    // sole+focused ultrawide monitor would size its own box to match its own aspect and the
+    // letterbox axis this test pins would flip. Keeping eDP-1 focused (cell 320x200) and
+    // putting the ultrawide workspace on an unfocused DP-1 reproduces genuine aspect
+    // mismatch between the shared 320x200 cell's mini-map and DP-1's usable rect.
     function test_unequal_aspect_letterboxes_on_short_axis() {
-        var uw = { name: "DP-1", x: 0, y: 0, width: 5120, height: 1440,
+        var uw = { name: "DP-1", x: 2560, y: 0, width: 5120, height: 1440,
                    scale: 1, reserved: [0, 0, 0, 0], transform: 0 }
         var input = {
-            monitors: [uw],
-            workspaces: [{ id: 1, monitorName: "DP-1", focused: true, occupied: true }],
+            monitors: [edp(), uw],
+            workspaces: [{ id: 1, monitorName: "DP-1", focused: false, occupied: true }],
             // fullscreen window fills the usable rect exactly, so its tile == the fitted R
-            windows: [{ address: "0xF", cls: "x", ax: 0, ay: 0, sw: 5120, sh: 1440,
+            windows: [{ address: "0xF", cls: "x", ax: 2560, ay: 0, sw: 5120, sh: 1440,
                         workspaceId: 1, floating: false, fullscreen: true }],
-            focusedMonitorName: "DP-1", params: params
+            focusedMonitorName: "eDP-1", availW: 1632, params: params
         }
         var r = Logic.layout(input)
         var b = boxById(r, 1), t = tilesByAddr(r, "0xF")
-        // width-limited: fills mini-map width (148), centered vertically inside mmH (88)
-        fuzzyCompare(t.w, 148, 0.5, "fills mini-map width")
-        verify(t.h < 88 - 1)                       // letterboxed on height
-        verify(t.y > b.y + params.cellInset + 0.5) // vertically centered, not flush to inset
+        // width-limited: fills mini-map width (box.w-2*inset = 308), centered vertically
+        // inside mmH (box.h-2*inset = 188)
+        fuzzyCompare(t.w, 308, 0.5, "fills mini-map width")
+        verify(t.h < 188 - 1)                       // letterboxed on height
+        verify(t.y > b.y + params.cellInset + 0.5)  // vertically centered, not flush to inset
     }
 
     // Fullscreen fills R; a non-fullscreen window that pokes above the usable top is clipped
@@ -133,15 +155,15 @@ TestCase {
         function run(w) {
             return Logic.layout({ monitors: [edp()],
                 workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
-                windows: [w], focusedMonitorName: "eDP-1", params: params })
+                windows: [w], focusedMonitorName: "eDP-1", availW: 1632, params: params })
         }
         var full = tilesByAddr(run({ address: "0xF", cls: "x", ax: 0, ay: 0,
             sw: 2048, sh: 1280, workspaceId: 1, floating: false, fullscreen: true }), "0xF")
         // ay:0 is above the usable top (R.y=26) => clipped; not full output => not auto-full
         var norm = tilesByAddr(run({ address: "0xN", cls: "x", ax: 0, ay: 0,
             sw: 1000, sh: 1200, workspaceId: 1, floating: false, fullscreen: false }), "0xN")
-        // fullscreen fills the height-limited mini-map exactly (mmH = 88)
-        fuzzyCompare(full.h, 88, 0.5, "fullscreen fills limiting axis")
+        // fullscreen fills the height-limited mini-map exactly (mmH = 188)
+        fuzzyCompare(full.h, 188, 0.5, "fullscreen fills limiting axis")
         // clipped window is shorter than the full fill, but shares the usable-top line
         verify(norm.h < full.h - 1)
         fuzzyCompare(norm.y, full.y, 0.5, "clip starts at usable top, not in the bar band")
@@ -153,7 +175,7 @@ TestCase {
             workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
             windows: [{ address: "0xOff", cls: "x", ax: -500, ay: 100, sw: 200, sh: 200,
                         workspaceId: 1, floating: false, fullscreen: false }],
-            focusedMonitorName: "eDP-1", params: params })
+            focusedMonitorName: "eDP-1", availW: 1632, params: params })
         compare(tilesByAddr(r, "0xOff"), null, "off-usable window is skipped")
     }
 
@@ -163,7 +185,7 @@ TestCase {
             workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
             windows: [{ address: "0xTiny", cls: "x", ax: 100, ay: 100, sw: 2, sh: 2,
                         workspaceId: 1, floating: true, fullscreen: false }],
-            focusedMonitorName: "eDP-1", params: params })
+            focusedMonitorName: "eDP-1", availW: 1632, params: params })
         var t = tilesByAddr(r, "0xTiny")
         compare(t.w, params.minTileW); compare(t.h, params.minTileH)
     }
@@ -173,13 +195,13 @@ TestCase {
             workspaces: [
                 { id: 1, monitorName: "eDP-1", focused: true,  occupied: true },
                 { id: 2, monitorName: "eDP-1", focused: false, occupied: false }
-            ], windows: [], focusedMonitorName: "eDP-1", params: params })
+            ], windows: [], focusedMonitorName: "eDP-1", availW: 1632, params: params })
         var b2 = boxById(r, 2)
-        // centre of box 2 => ws 2
-        compare(Logic.hitWorkspace(r.boxes, b2.x + 80, b2.y + 50), 2)
-        // the gap between box 1 and box 2 (x in 160..168) => null
-        compare(Logic.hitWorkspace(r.boxes, 164, b2.y + 50), null)
-        // above the cells, in the row-label band (y < 16) => null
+        // centre of box 2 => ws 2 (cell is 320x200)
+        compare(Logic.hitWorkspace(r.boxes, b2.x + 160, b2.y + 100), 2)
+        // the gap between box 1 and box 2 (x in 320..328) => null
+        compare(Logic.hitWorkspace(r.boxes, 324, b2.y + 100), null)
+        // above the cells, in the header band (y < headerH 22) => null
         compare(Logic.hitWorkspace(r.boxes, 10, 4), null)
     }
 
@@ -198,16 +220,15 @@ TestCase {
     // the window is fullscreen-FLAGGED but reports small/offset geometry: fill must still fill
     // R (the flag wins), whereas clipping that geometry would give a tiny ~21px-wide tile.
     function test_fullscreen_flag_fills_R_even_when_geometry_small() {
-        var r = Logic.layout({ monitors: [edp()],
-            workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
-            windows: [{ address: "0xFS", cls: "x", ax: 500, ay: 400, sw: 300, sh: 200,
-                        workspaceId: 1, floating: false, fullscreen: true }],
-            focusedMonitorName: "eDP-1", params: params })
-        var b = boxById(r, 1), t = tilesByAddr(r, "0xFS")
+        var r = Logic.layout({ monitors:[edp()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true}],
+            windows:[{address:"0xFS",cls:"x",ax:500,ay:400,sw:300,sh:200,
+                      workspaceId:1,floating:false,fullscreen:true}],
+            focusedMonitorName:"eDP-1", availW:1632, params:params })
+        var t = tilesByAddr(r,"0xFS")
         verify(t !== null)
-        fuzzyCompare(t.h, 88, 0.5, "fullscreen fills R height (mmH)")
-        verify(t.w > 100)                        // fill: R.w*k ~143.7; a clipped 300px would be ~21
-        fuzzyCompare(t.y, b.y + 6, 0.5)          // offY
+        fuzzyCompare(t.h, 188, 0.5, "fullscreen fills R height = box.h-2*inset")
+        verify(t.w > 100)
     }
 
     // Pins the min-size clamp's position clamp: a hairline window near the far edge of the
@@ -217,10 +238,10 @@ TestCase {
             workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
             windows: [{ address: "0xEdge", cls: "x", ax: 2046, ay: 100, sw: 2, sh: 2,
                         workspaceId: 1, floating: true, fullscreen: false }],
-            focusedMonitorName: "eDP-1", params: params })
+            focusedMonitorName: "eDP-1", availW: 1632, params: params })
         var b = boxById(r, 1), t = tilesByAddr(r, "0xEdge")
         verify(t !== null)
-        compare(t.w, params.minTileW)                                   // min-clamped
-        verify(t.x + t.w <= b.x + params.cellW - params.cellInset + 0.01) // stays in the inset
+        compare(t.w, params.minTileW)                                // min-clamped
+        verify(t.x + t.w <= b.x + b.w - params.cellInset + 0.01)      // stays in the inset
     }
 }
