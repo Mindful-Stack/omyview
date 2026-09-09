@@ -1,3 +1,7 @@
 [tasks.test]
 description = "Tier 1: pure-logic unit tests, no compositor"
 run = "bash tests/run.sh"
+
+[tasks.test-integration]
+description = "Tier 2: nested-Hyprland integration (local; needs Hyprland + foot + jq)"
+run = "bash tests/integration/move.sh"
