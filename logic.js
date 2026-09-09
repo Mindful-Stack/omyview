@@ -117,6 +117,20 @@ function layout(input) {
              groups: groups, cell: { w: cw, h: ch, cols: cols } }
 }
 
+// Reverse of _tileRect's placement: map a dragged tile's canvas top-left back to the window's
+// real global logical top-left, so a floating window can be repositioned to where it was
+// dropped inside its own workspace cell. (Tiled windows can't be repositioned by Hyprland IPC.)
+function dropToWindowPos(tileX, tileY, box, mon, P) {
+    var R = _usableRect(mon)
+    var mmW = box.w - 2 * P.cellInset, mmH = box.h - 2 * P.cellInset
+    var k = Math.min(mmW / R.w, mmH / R.h)
+    var offX = P.cellInset + (mmW - R.w * k) / 2
+    var offY = P.cellInset + (mmH - R.h * k) / 2
+    var rx = (tileX - box.x - offX) / k
+    var ry = (tileY - box.y - offY) / k
+    return { x: Math.round(mon.x + R.x + rx), y: Math.round(mon.y + R.y + ry) }
+}
+
 function _center(b) { return { x: b.x + b.w / 2, y: b.y + b.h / 2 } }
 
 // Spatial arrow-key navigation over the wrapped grid. dir: "left"|"right"|"up"|"down".

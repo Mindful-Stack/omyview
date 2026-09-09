@@ -123,7 +123,8 @@ Item {
         for (var a = 0; a < d.adds.length; a++) {
             var t = d.adds[a]
             tilesModel.append({ address: t.address, wx: t.x, wy: t.y, ww: t.w, wh: t.h,
-                                cls: clsFor(t.address), title: titleFor(t.address), wsid: t.workspaceId })
+                                cls: clsFor(t.address), title: titleFor(t.address),
+                                wsid: t.workspaceId, floating: floatingFor(t.address) })
         }
         for (var u = 0; u < d.updates.length; u++) {
             var tu = d.updates[u]
@@ -140,19 +141,31 @@ Item {
 
     property var _clsByAddress: ({})
     property var _titleByAddress: ({})
+    property var _floatingByAddress: ({})
+    property var _monByName: ({})
     function clsFor(addr) { return root._clsByAddress[addr] || "" }
     function titleFor(addr) { return root._titleByAddress[addr] || "" }
+    function floatingFor(addr) { return !!root._floatingByAddress[addr] }
+    function boxForWs(id) {
+        for (var i = 0; i < boxes.length; i++) if (boxes[i].workspaceId === id) return boxes[i]
+        return null
+    }
 
     function rebuild() {
         buildHandles()
         var input = buildInput()
-        var cmap = {}, tmap = {}
+        var cmap = {}, tmap = {}, fmap = {}
         for (var i = 0; i < input.windows.length; i++) {
             cmap[input.windows[i].address] = input.windows[i].cls
             tmap[input.windows[i].address] = input.windows[i].title
+            fmap[input.windows[i].address] = input.windows[i].floating
         }
         root._clsByAddress = cmap
         root._titleByAddress = tmap
+        root._floatingByAddress = fmap
+        var monmap = {}
+        for (var mi = 0; mi < input.monitors.length; mi++) monmap[input.monitors[mi].name] = input.monitors[mi]
+        root._monByName = monmap
         var res = Logic.layout(input)
         root.boxes = res.boxes
         root.groups = res.groups
@@ -389,6 +402,8 @@ Item {
                                     // restoring bindings (rebinding resets parent.x/y to model.wx).
                                     var cx = parent.x + parent.width / 2
                                     var cy = parent.y + parent.height / 2
+                                    var dropX = parent.x, dropY = parent.y   // top-left, for floating reposition
+                                    var wsid = model.wsid, isFloat = model.floating
                                     // Dragging assigned parent.x/y imperatively, destroying the
                                     // `x: model.wx` bindings — restore them so snap-back and the
                                     // post-move rebuild actually reposition the tile.
@@ -400,11 +415,23 @@ Item {
                                         root.close(); return
                                     }
                                     var targetWs = Logic.hitWorkspace(root.boxes, cx, cy)
-                                    if (targetWs !== null && targetWs !== model.wsid) {
+                                    if (targetWs !== null && targetWs !== wsid) {
                                         root.draggingAddress = ""   // release grab; move rebuilds
                                         root._startMove(addr, targetWs)
+                                    } else if (isFloat) {
+                                        // same-workspace drop: reposition a FLOATING window to the drop point
+                                        var wbox = root.boxForWs(wsid)
+                                        var wmon = wbox ? root._monByName[wbox.monitorName] : null
+                                        if (wbox && wmon) {
+                                            var p = Logic.dropToWindowPos(dropX, dropY, wbox, wmon, root.params)
+                                            root.draggingAddress = ""
+                                            Hyprland.dispatch('hl.dsp.window.move({ x = ' + p.x + ', y = ' + p.y +
+                                                              ', window = "address:' + addr + '" })')
+                                            if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
+                                            root._reconcileTries = 0; reconcileTimer.restart()
+                                        } else { root.draggingAddress = ""; root.rebuild() }
                                     } else {
-                                        root.draggingAddress = ""; root.rebuild()   // snap back
+                                        root.draggingAddress = ""; root.rebuild()   // tiled same-ws: snap back
                                     }
                                 }
                             }

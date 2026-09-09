@@ -254,6 +254,21 @@ TestCase {
         verify(t.x + t.w <= b.x + b.w - params.cellInset + 0.01)      // stays in the inset
     }
 
+    // dropToWindowPos is the inverse of tile placement: a floating window at real (ax,ay),
+    // once mapped to its tile and then mapped back from that tile's top-left, must land at
+    // (ax,ay) again (within rounding). Fails if the reverse math drifts from _tileRect.
+    function test_drop_to_window_pos_roundtrip() {
+        var win = { address:"0xF", cls:"x", ax:600, ay:500, sw:400, sh:300,
+                    workspaceId:1, floating:true, fullscreen:false }
+        var r = Logic.layout({ monitors:[edp()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true}],
+            windows:[win], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        var b = boxById(r,1), t = tilesByAddr(r,"0xF")
+        var back = Logic.dropToWindowPos(t.x, t.y, b, edp(), params)
+        fuzzyCompare(back.x, 600, 1.5, "recovers real x")
+        fuzzyCompare(back.y, 500, 1.5, "recovers real y")
+    }
+
     function indexOfWs(r, id) {
         for (var i = 0; i < r.boxes.length; i++) if (r.boxes[i].workspaceId === id) return i
         return -1
