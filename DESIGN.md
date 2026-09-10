@@ -119,7 +119,42 @@ and `docs/plans/2026-09-08-v2-previews-drag-drop.md` (task-by-task build).
   (never wholesale-reassigned), and the dragged address is never removed/replaced mid-drag —
   so the pointer grab and its `ScreencopyView` survive refreshes.
 - **Silent move + reconcile.** On drop, `hl.dsp.window.move({ workspace, follow = false, … })`
-  (typed Quickshell dispatch — needs a recent Hyprland; not `hyprctl`-invocable, see Tier 2),
+  (typed dispatch in Hyprland Lua configuration mode; works via Quickshell and `hyprctl`),
   then `refreshToplevels()` and a bounded reconcile so the tile settles on real geometry.
 - **Testing.** Tier 1 numeric unit tests (`logic.js`) in CI; Tier 2 nested-Hyprland integration
   (`tests/integration/move.sh`) asserts the silent-move semantics on a real, isolated Hyprland.
+
+## Drag repair and polish (2026-09-09)
+
+- Refresh each existing tile's floating role; changing a window from tiled to floating must
+  immediately enable floating placement.
+- Hold optimistic drop geometry per address until fresh client workspace/coordinates match.
+  After 1.8 seconds, rejected moves return to compositor geometry. Separate grabs can have
+  independent pending moves. A new grab supersedes its address's old pending destination.
+- For floating workspace transfers, send position only after the target workspace appears
+  in fresh client data. Coordinates are quoted global logical pixels, bounded by the full
+  window's extent and the target monitor's usable area.
+- Centralize release/cancellation/close cleanup. Tile stacking stays a declarative binding
+  to dragging/hover state. A missing dragged client cancels the gesture on refresh.
+- Edge scrolling ramps within 48 logical pixels of the viewport boundary. Content changes
+  offset the held tile equally, keeping it under the pointer and updating the target highlight.
+  Background refreshes no longer scroll back to the keyboard-selected workspace.
+- Offscreen Qt tests cover real mouse events and binding restoration. The integration test
+  exercises production Overview methods through real Quickshell in a disposable Lua session.
+
+## Addressed tiled drops (2026-09-10)
+
+The earlier same-workspace tiled snap-back limitation is superseded. Hyprland 0.56.2 accepts
+`hl.dsp.window.swap({window="address:SOURCE", target="address:TARGET"})`. No focus step is
+needed. A Lua function saves `hl.get_cursor_pos()`, dispatches the swap and restores the cursor,
+because the native swap warps it even for hidden workspaces.
+
+Drop hit-testing uses the dragged tile's center and excludes the source, floating/fullscreen
+windows and pending targets. Same-workspace drops swap both tiles optimistically; acknowledgement
+checks both positions and sizes. Cross-workspace drops transfer first, then swap with the chosen
+target using its fresh geometry. The target remains on its workspace. If it disappears or
+becomes ineligible, the completed transfer retains normal tiling. Empty workspace drops also
+use normal tiling. The target tile is highlighted before release.
+
+Verified with real Quickshell and three tiled windows: exchanging positions/sizes without
+changing active workspace or cursor; transferring to a selected slot on a hidden workspace.

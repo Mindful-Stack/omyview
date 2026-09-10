@@ -15,20 +15,22 @@ Item {
     property string title: ""
     property bool dragging: false        // set by Overview during a drag to suppress hover-zoom
 
+    property bool dropTarget: false
+
     readonly property bool wantCapture: handle !== null && capMode !== "icon"
     readonly property string iconUrl: Quickshell.iconPath(String(cls).toLowerCase(), true)
 
     HoverHandler { id: hh; enabled: !tile.dragging }
-    scale: hh.hovered ? 1.05 : 0.95
+    scale: dragging ? 1 : (hh.hovered ? 1.05 : 0.95)
     transformOrigin: Item.Center
-    z: hh.hovered ? 10 : 0
+    z: dragging ? 99999 : (hh.hovered ? 10 : 0)
     Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
 
     ClippingRectangle {
         anchors.fill: parent
         color: tile.bg
         radius: 6
-        border.width: 1
+        border.width: tile.dropTarget ? 3 : 1
         border.color: tile.borderColor
 
         ScreencopyView {

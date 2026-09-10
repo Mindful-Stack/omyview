@@ -119,8 +119,8 @@ function layout(input) {
 
 // Reverse of _tileRect's placement: map a dragged tile's canvas top-left back to the window's
 // real global logical top-left, so a floating window can be repositioned to where it was
-// dropped inside its own workspace cell. (Tiled windows can't be repositioned by Hyprland IPC.)
-function dropToWindowPos(tileX, tileY, box, mon, P) {
+// dropped inside its own workspace cell. Tiled placement uses addressed swaps instead.
+function dropToWindowPos(tileX, tileY, box, mon, P, win) {
     var R = _usableRect(mon)
     var mmW = box.w - 2 * P.cellInset, mmH = box.h - 2 * P.cellInset
     var k = Math.min(mmW / R.w, mmH / R.h)
@@ -128,7 +128,16 @@ function dropToWindowPos(tileX, tileY, box, mon, P) {
     var offY = P.cellInset + (mmH - R.h * k) / 2
     var rx = (tileX - box.x - offX) / k
     var ry = (tileY - box.y - offY) / k
-    return { x: Math.round(mon.x + R.x + rx), y: Math.round(mon.y + R.y + ry) }
+    // Include the window's extent so a drop near the edge stays fully visible.
+    // Without an extent retain the original point-clamping API for callers.
+    var l = _monLogical(mon)
+    var minX = mon.x + (win ? R.x : 0), minY = mon.y + (win ? R.y : 0)
+    var maxX = win ? Math.max(minX, mon.x + R.x + R.w - win.sw) : mon.x + l.w
+    var maxY = win ? Math.max(minY, mon.y + R.y + R.h - win.sh) : mon.y + l.h
+    var x = Math.round(Math.max(minX, Math.min(mon.x + R.x + rx, maxX)))
+    var y = Math.round(Math.max(minY, Math.min(mon.y + R.y + ry, maxY)))
+    // The typed dispatcher reserves -1 for "preserve this axis".
+    return { x: x === -1 ? -2 : x, y: y === -1 ? -2 : y }
 }
 
 function _center(b) { return { x: b.x + b.w / 2, y: b.y + b.h / 2 } }
@@ -175,4 +184,14 @@ function diffByAddress(prevAddresses, nextTiles) {
     var removes = []
     for (var a in prev) if (!next[a]) removes.push(a)
     return { adds: adds, updates: updates, removes: removes }
+}
+
+// Pixels per tick, ramping smoothly up to 900 px/s within a 48px edge band.
+function edgeScrollDelta(pointer, viewport, offset, content, elapsedMs) {
+    var limit = Math.max(0, content - viewport)
+    if (limit === 0 || viewport <= 0) return 0
+    var band = Math.min(48, viewport / 2), velocity = 0
+    if (pointer < band) velocity = -Math.min(1, (band - pointer) / band)
+    else if (pointer > viewport - band) velocity = Math.min(1, (pointer - viewport + band) / band)
+    return Math.max(0, Math.min(limit, offset + velocity * 900 * elapsedMs / 1000)) - offset
 }

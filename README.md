@@ -36,8 +36,8 @@ removed `walker`.
   `PATH` — it ships with Omarchy). Quickshell must provide `Quickshell.Wayland`
   `ScreencopyView` + `ToplevelManager` (0.3.x does).
 - A **recent Hyprland** (developed against 0.56.2). Omyview uses Hyprland's typed `hl.dsp.*`
-  dispatchers for focus/move/close, so it needs a Hyprland new enough to have them (~0.51+);
-  on older versions those actions would silently do nothing.
+  dispatchers for focus/move/close and requires **Lua configuration mode** (`hyprland.lua`),
+  as used by Omarchy Quattro. A legacy `.conf` session rejects those dispatchers.
 
 ### 1. Add the plugin
 
@@ -210,3 +210,20 @@ Maintainers: **@DanielThyselius**, **@dotnetemmanuel**.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+### Drag regression checks
+
+`mise run test` runs pure layout tests and offscreen Qt mouse-event tests. The latter use
+production drag handlers, models, bindings and timers with only shell/compositor adapters
+replaced (`tests/ui/prepare.py`); they need Python 3 as well as Qt6 test tooling.
+
+`mise run test-integration` launches an isolated **Lua-configured** Hyprland and real Quickshell.
+It checks repeated floating placement on an offset monitor, floating workspace transfer,
+and tiled workspace transfer without changing the active workspace. Requires Hyprland,
+Quickshell, foot and jq, plus a running Wayland session for the nested output.
+
+Floating drops keep the full window within the target monitor's usable bounds. Dropping
+outside a workspace cancels. Drop a tiled window onto another tile to swap within a workspace;
+across workspaces, it moves first and then takes the selected tile's slot. An empty destination
+uses normal tiling. Floating and fullscreen windows are excluded as swap targets.
+Target highlighting and edge scrolling help reach workspaces below the viewport.

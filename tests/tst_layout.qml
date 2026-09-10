@@ -268,6 +268,16 @@ TestCase {
         fuzzyCompare(back.x, 600, 1.5, "recovers real x")
         fuzzyCompare(back.y, 500, 1.5, "recovers real y")
     }
+    // Never emit a negative coord (Hyprland reads -1 as "preserve axis"; negatives fling
+    // the window off-screen). A drop above/left of the mini-map content clamps to >= 0.
+    function test_drop_to_window_pos_clamps_nonnegative() {
+        var r = Logic.layout({ monitors:[edp()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true}],
+            windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        var b = boxById(r,1)
+        var back = Logic.dropToWindowPos(b.x - 50, b.y - 50, b, edp(), params) // above-left of cell
+        verify(back.x >= 0); verify(back.y >= 0)
+    }
 
     function indexOfWs(r, id) {
         for (var i = 0; i < r.boxes.length; i++) if (r.boxes[i].workspaceId === id) return i
@@ -294,4 +304,22 @@ TestCase {
         var i10 = indexOfWs(r, 10)
         compare(Logic.navigate(r.boxes, i10, "down"), i10)
     }
+    function test_drop_keeps_entire_window_in_usable_bounds() {
+        var mon=edp(); mon.y=1440
+        var box={x:0,y:22,w:320,h:200}
+        var p=Logic.dropToWindowPos(319,221,box,mon,params,{sw:600,sh:400})
+        compare(p.x,1448)
+        compare(p.y,2320)
+        p=Logic.dropToWindowPos(-100,-100,box,mon,params,{sw:600,sh:400})
+        compare(p.x,0); compare(p.y,1466)
+    }
+    function test_edge_scroll_is_bounded_and_proportional() {
+        compare(Logic.edgeScrollDelta(200,400,100,1000,16),0)
+        verify(Logic.edgeScrollDelta(399,400,100,1000,16)>0)
+        verify(Logic.edgeScrollDelta(1,400,100,1000,16)<0)
+        compare(Logic.edgeScrollDelta(0,400,0,1000,16),0)
+        compare(Logic.edgeScrollDelta(400,400,599,1000,16),1)
+        compare(Logic.edgeScrollDelta(400,400,0,300,16),0)
+    }
+
 }

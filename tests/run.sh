@@ -11,4 +11,5 @@ else
   echo "Install qt6-declarative (Arch) or qt6-declarative-dev-tools (Debian/Ubuntu)." >&2
   exit 127
 fi
-exec env QT_QPA_PLATFORM=offscreen "$RUNNER" -input "$(dirname "$0")"
+env QT_QPA_PLATFORMTHEME=generic QT_QPA_PLATFORM=offscreen "$RUNNER" -input "$(dirname "$0")"
+bash "$(dirname "$0")/ui/run.sh"

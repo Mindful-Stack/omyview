@@ -1,0 +1,43 @@
+"""Build an offscreen fixture from production QML; replace only shell/compositor adapters.
+MouseArea events, ListModel, bindings, timers and reconciliation run unchanged in Qt.
+"""
+from pathlib import Path
+import re
+import sys
+source, dest = map(Path, sys.argv[1:])
+qml = (source / 'Overview.qml').read_text()
+qml = re.sub(r'^import (Quickshell.*|qs\..*)\n', '', qml, flags=re.M)
+qml = re.sub(r'Color\.menu\.\w+', '"#888888"', qml)
+qml = qml.replace('Style.cornerRadius', '8')
+qml = qml.replace('Hyprland.', 'compositor.').replace('target: Hyprland', 'target: compositor')
+qml = qml.replace('Quickshell.screens', '[]').replace('ToplevelManager.toplevels', 'null')
+qml = qml.replace('PanelWindow {', 'Item {')
+qml = re.sub(r'^\s*(screen: root.targetScreen|WlrLayershell\..*|exclusionMode:.*|color: "transparent")\n', '\n', qml, flags=re.M)
+qml = qml.replace('anchors { top: true; bottom: true; left: true; right: true }', 'width: 1200; height: 800')
+qml = qml.replace('id: root', '''id: root
+    property alias testModel: tilesModel
+    property alias testFlick: flick
+    property alias testCanvas: canvas
+    property QtObject compositor: QtObject {
+        property var monitors: ({values: []})
+        property var workspaces: ({values: []})
+        property var focusedMonitor: null
+        property var focusedWorkspace: null
+        property var commands: []
+        signal rawEvent()
+        function dispatch(command) { commands = commands.concat([command]) }
+        function refreshToplevels() {}
+        function refreshWorkspaces() {}
+        function refreshMonitors() {}
+    }
+''', 1)
+(dest / 'Overview.qml').write_text(qml)
+# Keep the real tile hover, scale and stacking bindings; replace capture-only visuals.
+tile = (source / 'WindowTile.qml').read_text()
+tile = re.sub(r'^import Quickshell.*\n', '', tile, flags=re.M)
+tile = re.sub(r'Quickshell.iconPath\(.*\)', '""', tile)
+start = tile.index('    ClippingRectangle {')
+end = tile.index('    // title label', start)
+tile = tile[:start] + '    Rectangle { anchors.fill: parent; color: tile.bg }\n\n' + tile[end:]
+(dest / 'WindowTile.qml').write_text(tile)
+(dest / 'logic.js').write_text((source / 'logic.js').read_text())

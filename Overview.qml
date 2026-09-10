@@ -88,28 +88,174 @@ Item {
 
     // Reconcile the tiles ListModel in place (drag-safe: never touch the dragged address).
     property string draggingAddress: ""
-    property int _pendingTargetWs: -1
-    property int _reconcileTries: 0
+    property var pendingMoves: ({})
+    property var dragTile: null
+    property int dropTargetWs: -1
+    property string dropTargetAddress: ""
+    property real dragViewportX: 0
+    property real dragViewportY: 0
     Timer {
         id: reconcileTimer
         interval: 120; repeat: true
         onTriggered: root._reconcileStep()
     }
-    function _startMove(addr, targetWs) {
-        root.draggingAddress = ""
-        root._pendingTargetWs = targetWs
-        root._reconcileTries = 0
-        Hyprland.dispatch('hl.dsp.window.move({ workspace = ' + targetWs +
-                          ', follow = false, window = "address:' + addr + '" })')
-        if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
-        if (typeof Hyprland.refreshWorkspaces === "function") Hyprland.refreshWorkspaces()
+    function _movePosition(addr, pos) {
+        Hyprland.dispatch('hl.dsp.window.move({ x = "' + pos.x + '", y = "' + pos.y +
+                          '", window = "address:' + addr + '" })')
+    }
+    function tiledTargetAt(addr, workspaceId, x, y) {
+        for (var i = tilesModel.count - 1; i >= 0; i--) {
+            var tile = tilesModel.get(i), win = _windowByAddress[tile.address]
+            if (tile.address === addr || tile.wsid !== workspaceId || !win ||
+                win.floating || win.fullscreen || pendingMoves[tile.address]) continue
+            if (x >= tile.wx && x <= tile.wx + tile.ww &&
+                y >= tile.wy && y <= tile.wy + tile.wh) return tile.address
+        }
+        return ""
+    }
+    function previewWindow(addr, win) {
+        var box = boxForWs(win.workspaceId), mon = box ? _monByName[box.monitorName] : null
+        if (!box || !mon) return
+        var rect = Logic._tileRect(win, mon, box, params)
+        if (!rect) return
+        for (var i = 0; i < tilesModel.count; i++) {
+            if (tilesModel.get(i).address === addr) {
+                tilesModel.set(i, {wx:rect.x, wy:rect.y, ww:rect.w, wh:rect.h, wsid:win.workspaceId})
+                return
+            }
+        }
+    }
+    function startTiledSwap(addr, targetAddr, win, target) {
+        if (!win || !target || win.floating || target.floating || win.fullscreen ||
+            target.fullscreen || win.workspaceId !== target.workspaceId || addr === targetAddr)
+            return false
+        var deadline = Date.now() + 1800
+        pendingMoves[addr] = {workspaceId:win.workspaceId, pos:{x:target.ax,y:target.ay},
+                              size:{w:target.sw,h:target.sh}, positioning:true, deadline:deadline}
+        pendingMoves[targetAddr] = {workspaceId:win.workspaceId, pos:{x:win.ax,y:win.ay},
+                                    size:{w:win.sw,h:win.sh}, positioning:true, deadline:deadline}
+        previewWindow(addr, target)
+        previewWindow(targetAddr, win)
+        // An addressed swap works without focusing either window, even on hidden
+        // workspaces. Hyprland warps to the source; restore the pointer in the same call.
+        Hyprland.dispatch('function() local p = hl.get_cursor_pos(); ' +
+                          'hl.dispatch(hl.dsp.window.swap({ window = "address:' + addr +
+                          '", target = "address:' + targetAddr + '" })); ' +
+                          'if p then hl.dispatch(hl.dsp.cursor.move({ x = p.x, y = p.y })) end end')
+        return true
+    }
+    function submitDrop(addr, targetWs, dropX, dropY) {
+        var box = boxForWs(targetWs), mon = box ? _monByName[box.monitorName] : null
+        var win = _windowByAddress[addr]
+        if (!box || !mon || !win) return
+        var sourceWs = win.workspaceId // model.wsid may still be optimistic
+        var pos = win.floating ? Logic.dropToWindowPos(dropX, dropY, box, mon, params, win) : null
+        var targetAddr = ""
+        if (!win.floating && !win.fullscreen) {
+            for (var ti = 0; ti < tilesModel.count; ti++) {
+                var tile = tilesModel.get(ti)
+                if (tile.address !== addr) continue
+                targetAddr = tiledTargetAt(addr, targetWs, dropX + tile.ww / 2, dropY + tile.wh / 2)
+                break
+            }
+        }
+        if (targetWs === sourceWs && !pos) {
+            if (targetAddr && startTiledSwap(addr, targetAddr, win, _windowByAddress[targetAddr])) {
+                scheduleRebuild()
+                reconcileTimer.restart()
+            }
+            return
+        }
+        var pending = { workspaceId: targetWs, pos: pos, swapTarget: targetAddr,
+                        positioning: targetWs === sourceWs,
+                        deadline: Date.now() + 1800 }
+        pendingMoves[addr] = pending
+        // Publish the destination before restoring x/y bindings. Keep it until the
+        // compositor acknowledges this move; refreshToplevels is asynchronous.
+        for (var i = 0; i < tilesModel.count; i++) {
+            if (tilesModel.get(i).address !== addr) continue
+            var rect = pos ? Logic._tileRect({ax:pos.x, ay:pos.y, sw:win.sw, sh:win.sh},
+                                            mon, box, params) : null
+            tilesModel.set(i, { wx: rect ? rect.x : dropX, wy: rect ? rect.y : dropY,
+                                ww: rect ? rect.w : tilesModel.get(i).ww,
+                                wh: rect ? rect.h : tilesModel.get(i).wh, wsid: targetWs })
+            break
+        }
+        if (targetWs !== sourceWs) {
+            Hyprland.dispatch('hl.dsp.window.move({ workspace = ' + targetWs +
+                              ', follow = false, window = "address:' + addr + '" })')
+        } else _movePosition(addr, pos)
+        scheduleRebuild()
         reconcileTimer.restart()
     }
     function _reconcileStep() {
-        root._reconcileTries++
         if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
-        root.rebuild()   // authoritative reposition from fresh Hyprland geometry
-        if (root._reconcileTries >= 6) { reconcileTimer.stop(); root._pendingTargetWs = -1 }
+        if (typeof Hyprland.refreshWorkspaces === "function") Hyprland.refreshWorkspaces()
+        root.rebuild()
+    }
+    function reconcileMoves(windows) {
+        var byAddress = {}
+        for (var i = 0; i < windows.length; i++) byAddress[windows[i].address] = windows[i]
+        for (var addr in pendingMoves) {
+            var pending = pendingMoves[addr], win = byAddress[addr]
+            if (Date.now() >= pending.deadline) {
+                delete pendingMoves[addr] // rejected move: return to authoritative geometry
+                continue
+            }
+            if (!win || win.workspaceId !== pending.workspaceId) continue
+            if (pending.swapTarget) {
+                var target = byAddress[pending.swapTarget]
+                if (target && target.workspaceId === pending.workspaceId &&
+                    startTiledSwap(addr, pending.swapTarget, win, target)) continue
+                // The destination closed or ceased to be tiled: keep the completed transfer.
+                delete pendingMoves[addr]
+                continue
+            }
+            if (pending.pos && !pending.positioning) {
+                // Wait for workspace transfer before positioning: transfer itself can
+                // relocate a floating window, especially across different monitors.
+                pending.positioning = true
+                _movePosition(addr, pending.pos)
+                continue
+            }
+            if (!pending.pos || (Math.abs(win.ax - pending.pos.x) <= 1 &&
+                                 Math.abs(win.ay - pending.pos.y) <= 1 &&
+                                 (!pending.size || (Math.abs(win.sw - pending.size.w) <= 1 &&
+                                                    Math.abs(win.sh - pending.size.h) <= 1))))
+                delete pendingMoves[addr]
+        }
+        if (!Object.keys(pendingMoves).length) reconcileTimer.stop()
+    }
+    function updateDropTarget() {
+        if (!dragTile) { dropTargetWs = -1; dropTargetAddress = ""; return }
+        var ws = Logic.hitWorkspace(boxes, dragTile.x + dragTile.width / 2,
+                                   dragTile.y + dragTile.height / 2)
+        dropTargetWs = ws === null ? -1 : ws
+        var win = _windowByAddress[draggingAddress]
+        dropTargetAddress = win && !win.floating && !win.fullscreen && ws !== null
+            ? tiledTargetAt(draggingAddress, ws, dragTile.x + dragTile.width / 2,
+                            dragTile.y + dragTile.height / 2) : ""
+    }
+    function endDrag() {
+        var tile = dragTile
+        dragTile = null
+        draggingAddress = ""
+        dropTargetWs = -1
+        dropTargetAddress = ""
+        if (tile) tile.restoreDrag()
+    }
+    Timer {
+        id: edgeScroll
+        interval: 16; repeat: true
+        running: root.dragTile !== null && root.dragTile.dragMoved
+        onTriggered: {
+            var dx = Logic.edgeScrollDelta(root.dragViewportX, flick.width, flick.contentX,
+                                           flick.contentWidth, interval)
+            var dy = Logic.edgeScrollDelta(root.dragViewportY, flick.height, flick.contentY,
+                                           flick.contentHeight, interval)
+            flick.contentX += dx
+            flick.contentY += dy
+        }
     }
     function applyTiles(tiles) {
         var prev = []
@@ -128,13 +274,14 @@ Item {
         }
         for (var u = 0; u < d.updates.length; u++) {
             var tu = d.updates[u]
-            if (root.draggingAddress === tu.address) continue   // grab is authoritative
+            if (root.draggingAddress === tu.address || pendingMoves[tu.address]) continue   // grab is authoritative
             var iu = indexOf(tu.address)
             if (iu >= 0) tilesModel.set(iu, { wx: tu.x, wy: tu.y, ww: tu.w, wh: tu.h,
-                                              title: titleFor(tu.address), wsid: tu.workspaceId })
+                                              title: titleFor(tu.address), cls: clsFor(tu.address), wsid: tu.workspaceId,
+                                              floating: floatingFor(tu.address) })
         }
         for (var rmi = 0; rmi < d.removes.length; rmi++) {
-            if (root.draggingAddress === d.removes[rmi]) continue // cancel handled elsewhere
+            if (root.draggingAddress === d.removes[rmi] || pendingMoves[d.removes[rmi]]) continue // cancel handled elsewhere
             var ir = indexOf(d.removes[rmi]); if (ir >= 0) tilesModel.remove(ir)
         }
     }
@@ -143,6 +290,7 @@ Item {
     property var _titleByAddress: ({})
     property var _floatingByAddress: ({})
     property var _monByName: ({})
+    property var _windowByAddress: ({})
     function clsFor(addr) { return root._clsByAddress[addr] || "" }
     function titleFor(addr) { return root._titleByAddress[addr] || "" }
     function floatingFor(addr) { return !!root._floatingByAddress[addr] }
@@ -154,12 +302,16 @@ Item {
     function rebuild() {
         buildHandles()
         var input = buildInput()
-        var cmap = {}, tmap = {}, fmap = {}
+        var cmap = {}, tmap = {}, fmap = {}, wmap = {}
         for (var i = 0; i < input.windows.length; i++) {
+            wmap[input.windows[i].address] = input.windows[i]
             cmap[input.windows[i].address] = input.windows[i].cls
             tmap[input.windows[i].address] = input.windows[i].title
             fmap[input.windows[i].address] = input.windows[i].floating
         }
+        root._windowByAddress = wmap
+        if (draggingAddress && !wmap[draggingAddress]) endDrag()
+        reconcileMoves(input.windows)
         root._clsByAddress = cmap
         root._titleByAddress = tmap
         root._floatingByAddress = fmap
@@ -180,7 +332,6 @@ Item {
             root.selectedIndex = res.boxes.length
                 ? Math.min(Math.max(root.selectedIndex, 0), res.boxes.length - 1) : -1
         }
-        ensureSelectedVisible()
     }
 
     function selectByNav(dir) {
@@ -207,10 +358,16 @@ Item {
         if (typeof Hyprland.refreshMonitors === "function") Hyprland.refreshMonitors()
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
         rebuild()          // instant paint from current data
+        ensureSelectedVisible()
         scheduleRebuild()  // then settle as fresh toplevel geometry lands
         Qt.callLater(function () { keyCatcher.forceActiveFocus() })
     }
-    function close() { root.draggingAddress = ""; reconcileTimer.stop(); settleTimer.stop(); opened = false }
+    function close() {
+        endDrag()
+        // A dispatched workspace move still needs its positioning/ack phase when closed.
+        settleTimer.stop()
+        opened = false
+    }
     function toggle() { if (opened) close(); else open() }
 
     // Ask Hyprland for fresh client data, then rebuild a few times over ~300ms so a window
@@ -228,7 +385,7 @@ Item {
         interval: 60; repeat: true
         property int ticks: 0
         onTriggered: {
-            if (root.opened && !root.draggingAddress) root.rebuild()
+            if (root.opened) root.rebuild()
             if (++ticks >= 5) stop()
         }
     }
@@ -237,7 +394,7 @@ Item {
     // Window/workspace changes while open: refresh + settle (never an immediate stale rebuild).
     Connections {
         target: Hyprland
-        function onRawEvent() { if (root.opened && !root.draggingAddress) root.scheduleRebuild() }
+        function onRawEvent() { if (root.opened) root.scheduleRebuild() }
     }
 
     PanelWindow {
@@ -299,9 +456,20 @@ Item {
                 contentHeight: canvas.implicitHeight
                 boundsBehavior: Flickable.StopAtBounds
                 clip: true
-                // A tile drag drives content scroll itself (edge auto-scroll, later task); keep
-                // Flickable's own press-drag gesture from fighting the tile's drag MouseArea.
+                // Edge scrolling drives the viewport while a tile owns the pointer grab.
                 interactive: !root.draggingAddress
+                property real previousX: 0
+                property real previousY: 0
+                onContentXChanged: {
+                    if (root.dragTile) root.dragTile.x += contentX - previousX
+                    previousX = contentX
+                    root.updateDropTarget()
+                }
+                onContentYChanged: {
+                    if (root.dragTile) root.dragTile.y += contentY - previousY
+                    previousY = contentY
+                    root.updateDropTarget()
+                }
 
                 // Content shrinking (windows/workspaces closing) must never leave the viewport
                 // scrolled past the new end.
@@ -320,13 +488,15 @@ Item {
                         Rectangle {
                             required property var modelData
                             readonly property bool isSel: modelData.workspaceId === root.selectedId
+                            readonly property bool isDrop: root.draggingAddress !== "" &&
+                                                           modelData.workspaceId === root.dropTargetWs
                             x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h
                             radius: 6
                             color: modelData.focused ? root.selBackground : "transparent"
-                            border.width: isSel ? 3 : (modelData.focused ? 2 : 1)
-                            border.color: isSel ? root.foreground
+                            border.width: (isDrop || isSel) ? 3 : (modelData.focused ? 2 : 1)
+                            border.color: isDrop ? root.selText : isSel ? root.foreground
                                                 : (modelData.focused ? root.selBackground : root.borderColor)
-                            opacity: (modelData.occupied || modelData.focused) ? 1.0 : 0.5
+                            opacity: (isDrop || modelData.occupied || modelData.focused) ? 1.0 : 0.5
 
                             Text {
                                 anchors.centerIn: parent
@@ -376,65 +546,64 @@ Item {
                             dragging: root.draggingAddress === model.address
                             handle: root.handleByAddress[model.address] || null
                             capMode: "live"
-                            borderColor: root.borderColor; bg: root.background; fg: root.foreground
+                            borderColor: root.dropTargetAddress === model.address ? root.selText : root.borderColor
+                            dropTarget: root.dropTargetAddress === model.address
+                            bg: root.background; fg: root.foreground
+                            id: windowTile
+                            readonly property bool dragMoved: dragArea.moved
+                            function restoreDrag() {
+                                dragArea.drag.target = undefined
+                                dragArea.moved = false
+                                x = Qt.binding(function () { return model.wx })
+                                y = Qt.binding(function () { return model.wy })
+                            }
+                            Component.onDestruction: {
+                                if (root.dragTile === windowTile) root.endDrag()
+                            }
                             MouseArea {
                                 id: dragArea
                                 anchors.fill: parent
                                 acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                                preventStealing: true
                                 drag.target: undefined
                                 property bool moved: false
                                 onPressed: function (m) {
                                     if (m.button !== Qt.LeftButton) return
+                                    // A second grab supersedes that address's pending visual state.
+                                    delete root.pendingMoves[model.address]
                                     root.draggingAddress = model.address
-                                    parent.z = 99999; moved = false
-                                    drag.target = parent
+                                    root.dragTile = windowTile
+                                    moved = false
+                                    drag.target = windowTile
+                                    var p = mapToItem(flick, m.x, m.y)
+                                    root.dragViewportX = p.x; root.dragViewportY = p.y
+                                    root.updateDropTarget()
                                 }
-                                onPositionChanged: if (drag.active) moved = true
+                                onPositionChanged: function (m) {
+                                    if (!pressed || root.dragTile !== windowTile) return
+                                    if (drag.active) moved = true
+                                    var p = mapToItem(flick, m.x, m.y)
+                                    root.dragViewportX = p.x; root.dragViewportY = p.y
+                                    root.updateDropTarget()
+                                }
+                                onCanceled: if (root.dragTile === windowTile) root.endDrag()
                                 onReleased: function (m) {
                                     if (m.button === Qt.MiddleButton) {
                                         Hyprland.dispatch('hl.dsp.window.close({ window = "address:' + model.address + '" })')
                                         return
                                     }
-                                    drag.target = undefined; parent.z = 0
-                                    var addr = model.address
-                                    var wasMoved = moved
-                                    // Capture the drop-point centre in canvas coords BEFORE
-                                    // restoring bindings (rebinding resets parent.x/y to model.wx).
-                                    var cx = parent.x + parent.width / 2
-                                    var cy = parent.y + parent.height / 2
-                                    var dropX = parent.x, dropY = parent.y   // top-left, for floating reposition
-                                    var wsid = model.wsid, isFloat = model.floating
-                                    // Dragging assigned parent.x/y imperatively, destroying the
-                                    // `x: model.wx` bindings — restore them so snap-back and the
-                                    // post-move rebuild actually reposition the tile.
-                                    parent.x = Qt.binding(function () { return model.wx })
-                                    parent.y = Qt.binding(function () { return model.wy })
-                                    if (!wasMoved) {   // a click, not a drag
-                                        root.draggingAddress = ""
+                                    if (root.dragTile !== windowTile) return
+                                    var addr = model.address, wasMoved = moved
+                                    // Capture before rebinding. Never dispatch for a drop outside a box.
+                                    root.updateDropTarget()
+                                    var targetWs = root.dropTargetWs
+                                    var dropX = windowTile.x, dropY = windowTile.y
+                                    if (wasMoved && targetWs >= 0)
+                                        root.submitDrop(addr, targetWs, dropX, dropY)
+                                    root.endDrag()
+                                    if (!wasMoved) {
                                         Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })')
-                                        root.close(); return
-                                    }
-                                    var targetWs = Logic.hitWorkspace(root.boxes, cx, cy)
-                                    if (targetWs !== null && targetWs !== wsid) {
-                                        root.draggingAddress = ""   // release grab; move rebuilds
-                                        root._startMove(addr, targetWs)
-                                    } else if (isFloat) {
-                                        // same-workspace drop: reposition a FLOATING window to the drop point
-                                        var wbox = root.boxForWs(wsid)
-                                        var wmon = wbox ? root._monByName[wbox.monitorName] : null
-                                        if (wbox && wmon) {
-                                            var p = Logic.dropToWindowPos(dropX, dropY, wbox, wmon, root.params)
-                                            root.draggingAddress = ""
-                                            // Classic movewindowpixel takes EXACT global pixels (verified: lands
-                                            // at the given coords). hl.dsp.window.move({x,y}) mis-scaled pixels as
-                                            // percent → corner clamp, so use the deterministic pixel dispatcher here.
-                                            Hyprland.dispatch('movewindowpixel exact ' + p.x + ' ' + p.y +
-                                                              ',address:' + addr)
-                                            if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
-                                            root._reconcileTries = 0; reconcileTimer.restart()
-                                        } else { root.draggingAddress = ""; root.rebuild() }
-                                    } else {
-                                        root.draggingAddress = ""; root.rebuild()   // tiled same-ws: snap back
+                                        root.close()
                                     }
                                 }
                             }

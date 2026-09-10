@@ -1,7 +1,7 @@
 [tasks.test]
-description = "Tier 1: pure-logic unit tests, no compositor"
+description = "Tier 1: layout and offscreen Qt drag tests, no compositor"
 run = "bash tests/run.sh"
 
 [tasks.test-integration]
-description = "Tier 2: nested-Hyprland integration (local; needs Hyprland + foot + jq)"
+description = "Tier 2: nested-Hyprland integration (local; needs Hyprland + Quickshell + foot + jq)"
 run = "bash tests/integration/move.sh"
