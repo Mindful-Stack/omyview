@@ -9,13 +9,12 @@ jobs:
       CI: "1"   # tests/lua-check.sh fails instead of skipping when its runtime is missing
     steps:
       - uses: actions/checkout@v4
-      - name: Install Qt6 Quick test tooling, the qml runtime and Lua
-        # qml-qt6 ships /usr/lib/qt6/bin/qml (off PATH; lua-check.sh probes that path).
+      - name: Install Qt6 Quick test tooling and Lua
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             qml6-module-qttest qml6-module-qtquick qml6-module-qtqml \
             qml6-module-qtqml-workerscript qml6-module-qtquick-window \
-            qt6-declarative-dev-tools qml-qt6 libqt6quick6 libgl1 lua5.4
+            qt6-declarative-dev-tools libqt6quick6 libgl1 lua5.4
       - name: Run Tier 1 logic tests (offscreen) + Lua chunk suite
         run: bash tests/run.sh
