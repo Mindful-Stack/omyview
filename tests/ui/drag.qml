@@ -9,6 +9,7 @@ TestCase {
     property var view
     property var client
     Component { id: overview; Overview {} }
+    SignalSpy { id: boxesSpy; signalName: "boxesChanged" }   // rebuild() assigns root.boxes a fresh array each call
     function init() {
         view = createTemporaryObject(overview, tc)
         verify(view !== null)
@@ -652,4 +653,19 @@ TestCase {
         mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
     }
 
+    // Raw compositor events faster than the settle interval must not starve the rebuild, and
+    // must not fan out into one refresh request per event.
+    function test_event_flood_still_rebuilds_and_throttles_refresh() {
+        boxesSpy.target = view; boxesSpy.clear()
+        view.compositor.refreshes = 0
+        for (var i = 0; i < 20; i++) { view.compositor.rawEvent(); wait(25) }   // 500 ms stream
+        verify(boxesSpy.count >= 5, "rebuilt during the flood (got " + boxesSpy.count + ")")
+        verify(view.compositor.refreshes <= 10, "at most one refresh per settle tick (got " + view.compositor.refreshes + ")")
+        var after = boxesSpy.count
+        wait(400)
+        verify(boxesSpy.count > after, "settles after the stream ends")
+        var settled = boxesSpy.count
+        wait(400)
+        compare(boxesSpy.count, settled, "timer stops after five quiet ticks")
+    }
 }

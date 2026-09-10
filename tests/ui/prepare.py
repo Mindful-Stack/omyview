@@ -30,7 +30,8 @@ qml = qml.replace('id: root', '''id: root
         property var commands: []
         signal rawEvent()
         function dispatch(command) { commands = commands.concat([command]) }
-        function refreshToplevels() {}
+        property int refreshes: 0
+        function refreshToplevels() { refreshes++ }
         function refreshWorkspaces() {}
         function refreshMonitors() {}
     }

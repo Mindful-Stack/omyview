@@ -445,24 +445,32 @@ Item {
     }
     function toggle() { if (opened) close(); else open() }
 
-    // Ask Hyprland for fresh client data, then rebuild a few times over ~300ms so a window
-    // opened while the overview is visible appears once its async geometry arrives — a single
-    // rebuild here would read stale/empty `lastIpcObject` geometry. Bursts of events coalesce
-    // into one settle window (the tick counter resets on each schedule).
+    // Ask Hyprland for fresh client data, then rebuild every 60ms until five quiet ticks have
+    // passed, so a window opened while the overview is visible appears once its async geometry
+    // arrives — a single immediate rebuild would read stale/empty `lastIpcObject` geometry. A
+    // burst of events extends the settle window (the tick counter resets) but never restarts
+    // the running timer, so a stream of events faster than the interval still rebuilds every
+    // tick; the refresh request is issued at most once per tick.
     function scheduleRebuild() {
-        if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
-        if (typeof Hyprland.refreshWorkspaces === "function") Hyprland.refreshWorkspaces()
+        if (!settleTimer.refreshed) {
+            settleTimer.refreshed = true
+            if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
+            if (typeof Hyprland.refreshWorkspaces === "function") Hyprland.refreshWorkspaces()
+        }
         settleTimer.ticks = 0
-        settleTimer.restart()
+        if (!settleTimer.running) settleTimer.start()
     }
     Timer {
         id: settleTimer
         interval: 60; repeat: true
         property int ticks: 0
+        property bool refreshed: false   // a refresh was requested since the last tick
         onTriggered: {
+            refreshed = false
             if (root.opened) root.rebuild()
             if (++ticks >= 5) stop()
         }
+        onRunningChanged: if (!running) refreshed = false
     }
     ListModel { id: tilesModel }
 
