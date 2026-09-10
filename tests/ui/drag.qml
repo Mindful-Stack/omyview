@@ -992,6 +992,9 @@ TestCase {
         verify(nt !== null)
         verify(nt.opacity < 1, "appears from transparent, o=" + nt.opacity)
         verify(nt.scale < 1, "appears from 0.9, s=" + nt.scale)
+        wait(60)
+        verify(nt.opacity > 0.05 && nt.opacity < 0.95, "mid-way: still fading, o=" + nt.opacity)
+        verify(nt.appearScale > 0.905 && nt.appearScale < 0.995, "mid-way: still scaling, s=" + nt.appearScale)
         wait(300)
         compare(nt.opacity, 1); compare(nt.appearScale, 1)
     }

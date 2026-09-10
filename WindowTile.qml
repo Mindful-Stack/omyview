@@ -66,24 +66,28 @@ Item {
     HoverHandler { id: hh; enabled: !tile.dragging }
     // Appear (window opened while the picker is showing): fade + scale 0.9 → 1 from the
     // centre, on channels of their own so the hover/lift Behaviors are not re-smoothing an
-    // already smooth ramp (they are disabled while it runs).
+    // already smooth ramp (they are disabled while it runs). Both NumberAnimations carry an
+    // explicit `from`, so Qt writes that starting value straight to appearScale/appearOpacity
+    // when the animation starts — no manual priming of those two properties needed, and no
+    // ordering trick with appearAnim.running to get a deterministic first value out of them.
+    // But Qt sets that `from` value *before* flipping the animation's own `running` to true,
+    // so at that exact instant the hover/lift Behaviors below (gated on !appearAnim.running)
+    // are still enabled and would catch the resulting scale/opacity write and smooth it into
+    // their own transition instead of letting it land — `priming` closes that one-tick gap.
     property real appearScale: 1
     property real appearOpacity: 1
+    property bool priming: false
     function appear() {
         if (!tile.motion.enabled) return
-        // Restart first: it flips appearAnim.running to true synchronously, which disables
-        // the hover/lift Behaviors below *before* the dip values are written, so that write
-        // lands directly instead of being smoothed by them (Behavior.enabled is checked at
-        // write time, not retroactively). The animation's own from-capture happens lazily on
-        // its first tick, after these values are in place, so it still ramps from 0.9/0.
+        priming = true
         appearAnim.restart()
-        appearScale = 0.9; appearOpacity = 0
+        priming = false
     }
     ParallelAnimation {
         id: appearAnim
-        NumberAnimation { target: tile; property: "appearScale"; to: 1
+        NumberAnimation { target: tile; property: "appearScale"; from: 0.9; to: 1
                           duration: tile.motion.normal; easing.type: tile.motion.move }
-        NumberAnimation { target: tile; property: "appearOpacity"; to: 1
+        NumberAnimation { target: tile; property: "appearOpacity"; from: 0; to: 1
                           duration: tile.motion.normal; easing.type: tile.motion.move }
     }
     scale: (dragging ? 1 : (hh.hovered ? 1.03 : 1)) * appearScale
@@ -91,9 +95,9 @@ Item {
     // Hover raises a tile within its own layer only; dragging is the single global exception.
     z: dragging ? 99999 : tileLayer * 10 + (hh.hovered ? 1 : 0)
     opacity: (dragging ? dragOpacity : 1) * appearOpacity
-    Behavior on scale { enabled: tile.motion.enabled && !appearAnim.running
+    Behavior on scale { enabled: tile.motion.enabled && !appearAnim.running && !priming
         NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
-    Behavior on opacity { enabled: tile.motion.enabled && !appearAnim.running
+    Behavior on opacity { enabled: tile.motion.enabled && !appearAnim.running && !priming
         NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
     transform: Scale {
         id: ghost
