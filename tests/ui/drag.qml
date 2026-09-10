@@ -385,5 +385,31 @@ TestCase {
         view.close()
         mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
     }
+    function canvasItems(name) {
+        var out=[], children=view.testCanvas.children
+        for (var i=0;i<children.length;i++) if (children[i].objectName===name) out.push(children[i])
+        return out
+    }
+    // Every workspace carries a number badge stacked above its previews; the big numeral
+    // shows only on empty workspaces, where nothing can hide it.
+    function test_badge_on_every_box_above_tiles_numeral_only_when_empty() {
+        var badges=canvasItems("wsBadge")
+        compare(badges.length, view.boxes.length, "one badge per workspace box")
+        var t=tile()
+        for (var i=0;i<badges.length;i++) {
+            var b=view.boxes[i]
+            verify(badges[i].visible)
+            verify(badges[i].x >= b.x && badges[i].y >= b.y, "badge sits inside its box")
+            verify(badges[i].z > t.z, "badge stacks above a resting tile")
+        }
+        var numerals=[], boxes=view.testCanvas.children
+        for (var j=0;j<boxes.length;j++) {
+            var kids=boxes[j].children||[]
+            for (var k=0;k<kids.length;k++) if (kids[k].objectName==="wsNumeral") numerals.push(kids[k])
+        }
+        compare(numerals.length, 2)
+        verify(!numerals[0].visible, "occupied workspace 1 hides the big numeral")
+        verify(numerals[1].visible, "empty workspace 2 shows the big numeral")
+    }
 
 }

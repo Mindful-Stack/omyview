@@ -31,6 +31,9 @@ Item {
     readonly property color dropWellColor: tone(Style.selectedFillAlpha)
     readonly property color hairline: tone(0.12)                          // between previews
     readonly property color accent: selText
+    // Badge chip: the card colour, nearly opaque, so the number reads over any preview.
+    readonly property color badgeColor: Qt.rgba(background.r, background.g, background.b, 0.88)
+    function wsLabel(id) { return id === 10 ? "0" : String(id) }   // matches the 1–0 keys
     // The card owns its radius: Style.cornerRadius mirrors Hyprland rounding, which may be 0.
     readonly property int boxRadius: 8
     readonly property int cardRadius: boxRadius + card.pad
@@ -521,10 +524,12 @@ Item {
                             color: isDrop ? root.dropWellColor
                                  : modelData.focused ? root.selBackground : root.wellColor
 
-                            // big low-contrast numeral behind the windows
+                            // big low-contrast numeral, only where nothing would hide it
                             Text {
+                                objectName: "wsNumeral"
                                 anchors.centerIn: parent
-                                text: modelData.workspaceId === 10 ? "0" : String(modelData.workspaceId)
+                                visible: !modelData.occupied
+                                text: root.wsLabel(modelData.workspaceId)
                                 color: root.foreground
                                 opacity: 0.10
                                 font.pixelSize: Math.round(modelData.h * 0.45)
@@ -631,6 +636,31 @@ Item {
                                         root.close()
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // badge layer (above tiles): the workspace number stays readable no matter
+                    // what the previews contain. One chip per box, top-left corner. Focused
+                    // workspace = accent chip. No mouse handling, so clicks fall through.
+                    Repeater {
+                        model: root.opened ? root.boxes : []
+                        Rectangle {
+                            required property var modelData
+                            objectName: "wsBadge"
+                            x: modelData.x + 6; y: modelData.y + 6
+                            z: 40   // above resting/hovered tiles, below the selection frame
+                            height: 18
+                            width: Math.max(height, badgeText.implicitWidth + 10)
+                            radius: 5
+                            color: modelData.focused ? root.accent : root.badgeColor
+                            Text {
+                                id: badgeText
+                                anchors.centerIn: parent
+                                text: root.wsLabel(modelData.workspaceId)
+                                color: modelData.focused ? root.background : root.foreground
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
                             }
                         }
                     }

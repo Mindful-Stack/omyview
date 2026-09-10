@@ -209,3 +209,10 @@ scale 1 with only a 12 % hairline. Monitor chips are plain text; `Logic.layout` 
 header band only when more than one monitor has workspaces. The scrim is configurable via
 `~/.config/omarchy/omyview.json` (`OmyviewConfig.qml`).
 Design: `docs/specs/2026-09-10-restyle-design.md`. Motion is deferred to a follow-up spec.
+
+## Workspace number badge (2026-09-10)
+
+Each box carries a small number chip in its top-left corner, drawn above the previews (card
+colour at 88 %, accent-filled for the focused workspace), so the 1–0 keys always have a visible
+anchor. The big low-contrast numeral is kept for empty workspaces only.
+Design: `docs/specs/2026-09-10-ws-badge-design.md`.
