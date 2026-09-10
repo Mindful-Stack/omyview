@@ -127,11 +127,33 @@ Optional user settings live in `~/.config/omarchy/omyview.json` (watched; edits 
 
 ```json
 {
-  "scrim": true
+  "scrim": true,
+  "hint": true
 }
 ```
 
 - `scrim` — dim the desktop behind the picker while it is open (default `true`).
+- `hint` — show the key hints under the workspace grid (default `true`).
+
+### Blurred scrim (optional, Hyprland side)
+
+Hyprland can frost the desktop behind the picker instead of only dimming it. This is a
+compositor setting, so it lives in your Hyprland config rather than in the plugin, and it needs
+blur enabled globally (a GPU cost while the picker is open). Lua config
+(`~/.config/hypr/*.lua` on Omarchy Quattro):
+
+```lua
+hl.config({ decoration = { blur = { enabled = true } } })
+hl.layer_rule({ match = { namespace = "omyview" }, blur = true, ignore_alpha = 0.3 })
+```
+
+Classic config:
+
+```ini
+decoration:blur:enabled = true
+layerrule = blur, omyview
+layerrule = ignorealpha 0.3, omyview
+```
 
 Colours follow the active Omarchy theme (`menu` surface roles and the shared fill alphas), so
 the picker re-themes with everything else. Layout constants live in the `params` object near

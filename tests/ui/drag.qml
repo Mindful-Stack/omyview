@@ -411,5 +411,23 @@ TestCase {
         verify(!numerals[0].visible, "occupied workspace 1 hides the big numeral")
         verify(numerals[1].visible, "empty workspace 2 shows the big numeral")
     }
+    function shadowOf(t) {
+        for (var i=0;i<t.children.length;i++) if (t.children[i].objectName==="floatShadow") return t.children[i]
+        fail("floatShadow not found")
+    }
+    // Only floating windows cast a shadow, and never while they are the drag ghost.
+    function test_floating_tile_shadow_follows_role_and_hides_in_transit() {
+        var t=tile()
+        verify(!shadowOf(t).visible, "tiled window: no shadow")
+        client.floating=true; view.rebuild()
+        verify(shadowOf(t).visible, "floating window: shadow")
+        var p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        mouseMove(tc,p.x+30,p.y+10,20)
+        verify(!shadowOf(t).visible, "no shadow under the drag ghost")
+        view.close()
+        mouseRelease(tc,p.x+30,p.y+10,Qt.LeftButton)
+    }
 
 }
