@@ -224,3 +224,58 @@ padding from `Style.space`, so the picker follows `omarchy display text size`. E
 tone step below occupied ones; floating windows cast a small `SoftShadow`; the key hints are key
 caps with labels and can be switched off (`hint` in `~/.config/omarchy/omyview.json`). Cell gaps
 tightened to 4/8. Design: `docs/specs/2026-09-10-theme-polish-design.md`.
+
+## Window states: fullscreen and floating (2026-09-10)
+
+Spec: `docs/specs/2026-09-10-window-states-design.md`; plan: `docs/plans/2026-09-10-window-states.md`.
+
+- **Fullscreen windows are drawn in their tiled slot, not filling the cell.** Hyprland publishes
+  only the fullscreen rect for such a window, but the other tiled windows on the workspace keep
+  their geometry (fullscreen hides them without moving them), so `Logic.recoverSlot` derives the
+  slot from what they leave uncovered: grid the usable rect on every window edge, seed on the
+  uncovered cell with the largest minimum side (a gap strip only wins that if a gap is as thick as the slot's thinnest cell), grow while whole
+  neighbouring columns/rows are uncovered, trim outer strips thinner than `slotGapTolerance`
+  (defaults to 24 when the caller omits it) cumulatively per side — at most one gap band is lost
+  off each edge, not one thin cell peeled off at a time. A lone fullscreen window still fills the
+  cell; an ambiguous result draws as a backdrop below the tiled tiles; a floating fullscreen
+  window is centred at 60%. Both modes (2 fullscreen, 1 maximized) are treated alike; `layout()`
+  tiles carry a `layer` role (0 backdrop / 1 tiled / 2 floating) and a `fullscreen` role (the mode).
+- **Badge.** A drawn corner glyph marks fullscreen/maximized tiles (hover label prefixed
+  "Fullscreen ·"/"Maximized ·"). Its own `MouseArea` sits above the drag area with
+  `preventStealing: true`, so a click never drags and a middle click on the badge is swallowed
+  rather than closing the window; only a left click dispatches `Logic.unfullscreenLua` — one
+  chunk, its toggle wrapped in `pcall`, that re-reads the window and toggles only if it is still
+  fullscreen — with no focus change and the overview open. The badge hides optimistically
+  (`pendingFullscreen`) until fresh data confirms or the 1.8s deadline returns it.
+- **Drops.** Fullscreen windows are ordinary tiled peers. `tiledInsertLua` strips the target
+  workspace's fullscreen window and the dragged window's mode *before* the float (so the anchor
+  is measured in its tiled slot) and re-applies them after the un-float — the dragged window's
+  own mode only for a same-workspace re-tile; cross-workspace it arrives tiled. A re-tile is
+  acknowledged when the dragged window's workspace/geometry **or the anchor's geometry** changed,
+  since an in-place re-tile of a fullscreen window ends in the same fullscreen rect.
+- **Stacking.** A tile's own `z` is `tileLayer * 10 + hover` (`WindowTile`'s `tileLayer` property,
+  seeded from the model's `layer` role — `Item` already owns a final `layer` property group, so
+  the tile can't be named `layer` itself), dragging excepted: floating tiles always paint above
+  tiled ones, and a hovered tiled tile never covers a floating one.
+- **Focus/cursor bookkeeping.** Fullscreening a window on the *active* workspace leaves Hyprland
+  0.56.2 with no active window (a hidden workspace's fullscreen leaves focus untouched instead),
+  so every chunk that touches fullscreen — `unfullscreenLua`, and `tiledInsertLua`'s re-tile,
+  which strips and re-applies fullscreen modes around the float/un-float — records the active
+  window and cursor position first and restores them at the end via `Logic.restoreFocusLua`, which
+  re-focuses only if the active window changed and always warps the cursor back; that
+  dispatcher-can-drop-focus behaviour is what the probe script
+  (`tests/integration/probe-fullscreen.sh`) established. Separately, `dwindle:preserve_split`
+  defaults to `false`, under which dwindle re-derives a container's split axis from its aspect
+  ratio on every recalculation — a fullscreen enter/exit is one — so a re-tile next to another
+  window that is later un-fullscreened (or a re-tile of a fullscreen window) can come back split
+  on the other axis; that is Hyprland's own behaviour, identical for a native drag.
+- **Testing.** `tests/lua-check.sh` (`qml6` + `lua5.4`) parses every Lua chunk `logic.js`
+  generates through a real Lua interpreter, as part of `mise run test`, so an unparseable chunk
+  (silently dropped by the compositor otherwise) fails the build. `tests/integration/fullscreen.sh`
+  runs 8 cases — a0 (exact focus/cursor/workspace check for a badge un-fullscreen on a hidden
+  workspace), a (badge un-fullscreen is silent on the active workspace), four `b` cases (a drop
+  onto each side of a fullscreen anchor), c (in-place re-tile of a fullscreen window keeps it
+  fullscreen), and d (a fullscreen window dragged cross-workspace arrives tiled and splits its
+  target) — checked against wall-clock acknowledgement bounds, not tick counts, since every poll
+  is its own IPC round trip. The rig pins `dwindle:preserve_split = true` so split axes stay
+  deterministic across the run.

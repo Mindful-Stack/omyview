@@ -26,5 +26,7 @@ ShellRoot {
         }
         function openOverview(): void { overview.open() }
         function pending(): string { return JSON.stringify(overview.pendingMoves) }
+        function unfullscreen(address: string): void { overview.rebuild(); overview.unfullscreen(address) }
+        function pendingFullscreen(): string { return JSON.stringify(overview.pendingFullscreen) }
     }
 }

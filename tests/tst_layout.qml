@@ -7,7 +7,7 @@ TestCase {
 
     readonly property var params: ({
         maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 6, cellSpacing: 8,
-        rowSpacing: 12, headerH: 22, minTileW: 8, minTileH: 6
+        rowSpacing: 12, headerH: 22, minTileW: 8, minTileH: 6, slotGapTolerance: 24
     })
 
     // eDP-1: 2560x1600 @1.25 => 2048x1280 logical; 26px top bar reserved.
@@ -168,9 +168,10 @@ TestCase {
         verify(t.y > b.y + params.cellInset + 0.5)  // vertically centered, not flush to inset
     }
 
-    // Fullscreen fills R; a non-fullscreen window that pokes above the usable top is clipped
-    // to R (shorter, but starting at the same usable-top line). The clip window is NOT the
-    // full output (sw 1000, sh 1200), so the 1px fullscreen auto-detect must not claim it.
+    // 0xF is fullscreen-flagged and lone on its workspace: layout() finds no tiled neighbours,
+    // so its slot is the whole usable rect and _tileRect's slot branch fills R. 0xN is
+    // unflagged and falls to the geometry heuristic instead; it pokes above the usable top and
+    // is NOT the full output (sw 1000, sh 1200), so the heuristic clips it rather than filling.
     function test_fullscreen_fills_but_nonfullscreen_clips() {
         function run(w) {
             return Logic.layout({ monitors: [edp()],
@@ -237,10 +238,11 @@ TestCase {
         compare(d.removes.length, 1); compare(d.removes[0], "0xA")
     }
 
-    // The earlier fullscreen fixtures used geometry equal to the output, so the clip path
-    // happens to equal the fill path there and the `if (isFull)` branch is never pinned. Here
-    // the window is fullscreen-FLAGGED but reports small/offset geometry: fill must still fill
-    // R (the flag wins), whereas clipping that geometry would give a tiny ~21px-wide tile.
+    // This window is fullscreen-FLAGGED but reports small/offset geometry (500,400,300x200),
+    // nowhere near the output. Being flagged and lone on its workspace, layout() gives it a
+    // slot (the whole usable rect, no tiled neighbours to recover from), so _tileRect takes
+    // the slot branch and fills R regardless of the window's own geometry — the geometry
+    // heuristic, which would clip this rect to a tiny ~21px-wide tile, is never consulted.
     function test_fullscreen_flag_fills_R_even_when_geometry_small() {
         var r = Logic.layout({ monitors:[edp()],
             workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true}],
@@ -400,6 +402,206 @@ TestCase {
         verify(none.indexOf('local x, y = 10, 20') >= 0)
         var bad = Logic.tiledInsertLua("0xabc", 2, { anchor: "0xdef", side: "sideways", x: 1, y: 2 })
         verify(bad.indexOf('sideways') < 0, "unknown side falls back to the anchor centre")
+    }
+
+    // The insert chunk strips fullscreen (target workspace's window + the dragged one) BEFORE
+    // the float so the anchor is measured in its tiled slot, and re-applies it AFTER the
+    // un-float: the workspace's window always, the dragged window only when it stays there.
+    function test_tiled_insert_lua_strips_fullscreen_first_and_reapplies_last() {
+        var lua = Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 })
+        verify(lua.indexOf('\n') < 0)
+        verify(lua.indexOf('hl.get_workspace("3")') >= 0, "reads the target workspace")
+        verify(lua.indexOf('fullscreen_window') >= 0 && lua.indexOf('fullscreen_mode') >= 0, "records the workspace's fullscreen state")
+        verify(lua.indexOf('ownMode') >= 0, "records the dragged window's own mode")
+        var firstFs = lua.indexOf('hl.dsp.window.fullscreen('), firstFloat = lua.indexOf('window.float(')
+        var lastFs = lua.lastIndexOf('hl.dsp.window.fullscreen('), lastFloat = lua.lastIndexOf('window.float(')
+        verify(firstFs >= 0 && firstFs < firstFloat, "fullscreen stripped before the float")
+        verify(lastFs > lastFloat, "fullscreen re-applied after the un-float")
+        verify(lua.indexOf('same and w.fullscreen or 0') >= 0, "own mode only kept for a same-workspace re-tile")
+        verify(lua.lastIndexOf('smart_split = smart') > lastFs, "config restored after everything")
+        verify(lua.indexOf('local prevW = hl.get_active_window()') >= 0, "focus recorded up front")
+        verify(lua.lastIndexOf('hl.dsp.focus(') > lua.lastIndexOf('smart_split = smart'), "focus restored (if moved) at the very end")
+        verify(lua.lastIndexOf('cursor.move(') > lua.lastIndexOf('hl.dsp.focus('), "cursor restored after the re-focus")
+        verify(lua.indexOf('fa:sub(1, 2) ~= "0x"') >= 0, "workspace fullscreen address normalised like restoreFocusLua")
+    }
+
+    // A chunk that fails to parse is dropped silently by the compositor, so beyond substring
+    // checks we sanity-check that every do/then/function( opener has a matching end.
+    function luaBalanced(s) {
+        var open = (s.match(/\b(do|then|function\s*\()/g) || []).length
+        var close = (s.match(/\bend\b/g) || []).length
+        return open === close
+    }
+
+    // The un-fullscreen chunk re-reads the window and only acts when its mode differs from the
+    // target, so a stale badge click is harmless; it names the window by address, is one line,
+    // and takes the target mode as a Lua expression (the insert chunk re-applies a recorded mode).
+    function test_unfullscreen_lua_is_guarded_single_line_and_addressed() {
+        var lua = Logic.unfullscreenLua("0xabc")
+        verify(lua.indexOf('\n') < 0, "single line: Quickshell drops multi-line dispatches")
+        verify(lua.indexOf('function()') === 0, "a function chunk, evaluated by hl.dispatch")
+        verify(lua.indexOf('hl.get_window("address:0xabc")') >= 0, "re-reads the window by address")
+        verify(lua.indexOf('fw.fullscreen ~= fm') >= 0, "guard: acts only when the mode differs")
+        verify(lua.indexOf('hl.dsp.window.fullscreen(') >= 0, "dispatches the typed fullscreen selector form")
+        verify(lua.indexOf('hl.get_window("address:0xabc"), 0') >= 0, "target mode 0 = off")
+        verify(lua.indexOf('(fm == 1 or (fm == 0 and fw.fullscreen == 1))') >= 0, "full mode-name condition, not just a fragment")
+        verify(lua.indexOf('pcall(function()') >= 0, "the toggle is wrapped in pcall so focus/cursor restore still runs if it throws")
+        verify(luaBalanced(lua), "do/then/function openers balance ends")
+        verify(lua.indexOf('local prevW, cur = hl.get_active_window(), hl.get_cursor_pos()') >= 0, "records focus + cursor first")
+        var fsAt = lua.indexOf('hl.dsp.window.fullscreen('), focusAt = lua.indexOf('hl.dsp.focus('), curAt = lua.lastIndexOf('cursor.move(')
+        verify(focusAt > fsAt && curAt > focusAt, "re-focus (if changed) then cursor restore, after the toggle")
+        verify(lua.indexOf('nowW.address ~= prevW.address') >= 0, "re-focuses only when focus actually moved")
+        var body = Logic.fullscreenBodyLua('fsSel', 'fsMode')
+        verify(body.indexOf('hl.get_window(fsSel), fsMode') >= 0, "selector and mode may be Lua expressions")
+        verify(body.indexOf('"maximized" or "fullscreen"') >= 0, "mode name derived from target/current mode")
+    }
+
+    // ---- recoverSlot: a fullscreen window's tiled slot is what the OTHER tiled windows leave
+    // uncovered. usableR is the usable rect in local coords (2048x1254 = eDP-1 minus the 26px bar).
+    readonly property var usableR: ({ x: 0, y: 0, w: 2048, h: 1254 })
+    function slotEq(s, x, y, w, h, msg) {
+        verify(s !== null, msg + ": got null")
+        compare(s.x, x, msg + " x"); compare(s.y, y, msg + " y")
+        compare(s.w, w, msg + " w"); compare(s.h, h, msg + " h")
+    }
+    function test_recover_slot_two_windows() {
+        // Teams on the left (x 0..825), Chrome fullscreen: the hole is the right part.
+        slotEq(Logic.recoverSlot(usableR, [{ x: 0, y: 0, w: 825, h: 1254 }], params),
+               825, 0, 1223, 1254, "two windows")
+    }
+    function test_recover_slot_nested_split_no_gaps() {
+        // left column split top/bottom, hole = right half (a projected horizontal edge splits
+        // the hole into two grid cells that must be merged back)
+        slotEq(Logic.recoverSlot(usableR, [{ x: 0, y: 0, w: 1024, h: 627 },
+                                          { x: 0, y: 627, w: 1024, h: 627 }], params),
+               1024, 0, 1024, 1254, "nested split")
+    }
+    // gaps_in 5 / gaps_out 10: the outer/inner strips are separate thin grid cells wherever a
+    // neighbour's edge creates one; those are trimmed, so the recovered slot starts at the true
+    // top (y 10, h 1234). Sides without a neighbour edge keep the gap merged in (x may be 1019
+    // or 1029, right edge 2048): padding, never a wrong slot.
+    function test_recover_slot_with_gaps_trims_padding() {
+        var s = Logic.recoverSlot(usableR, [{ x: 10, y: 10, w: 1009, h: 612 },
+                                           { x: 10, y: 632, w: 1009, h: 612 }], params)
+        verify(s !== null)
+        compare(s.y, 10, "top gap row trimmed"); compare(s.h, 1234, "bottom gap row trimmed")
+        verify(s.x >= 1019 && s.x <= 1029, "left edge within the inner gap")
+        compare(s.x + s.w, 2048)
+    }
+    // gaps_out 40 is ABOVE slotGapTolerance: the outer strips survive the trim as padding, but
+    // the old bounding-box approach would have stretched the result to the whole rect (x 0).
+    // Seed+grow must stop at the neighbour: the slot never reaches the left strip.
+    function test_recover_slot_outer_gap_above_tolerance_never_spans_whole_rect() {
+        var s = Logic.recoverSlot(usableR, [{ x: 40, y: 40, w: 979, h: 582 },
+                                           { x: 40, y: 632, w: 979, h: 582 }], params)
+        verify(s !== null)
+        verify(s.x >= 1019, "must not cross the neighbour into the left outer strip: x=" + s.x)
+        compare(s.x + s.w, 2048)
+        // contains the true tiled rect {1029,40,979,1174}
+        verify(s.x <= 1029 && s.y <= 40 && s.x + s.w >= 2008 && s.y + s.h >= 1214)
+    }
+    // The fullscreen window was the SMALLEST of six, gaps_in 5: projected edges split the hole,
+    // strips are thin. Seed on largest-min-side + grow + trim recovers the exact tiled rect.
+    function test_recover_slot_smallest_of_six_exact() {
+        var others = [
+            { x: 0,    y: 0,   w: 1019, h: 1254 },   // A: left half
+            { x: 1029, y: 0,   w: 1019, h: 622 },    // B: right-top
+            { x: 1029, y: 632, w: 507,  h: 308 },    // C
+            { x: 1541, y: 632, w: 507,  h: 308 },    // D
+            { x: 1029, y: 945, w: 507,  h: 309 }     // E ; hole = {1541,945,507,309}
+        ]
+        slotEq(Logic.recoverSlot(usableR, others, params), 1541, 945, 507, 309, "smallest of six")
+    }
+    function test_recover_slot_no_others_is_whole_rect() {
+        slotEq(Logic.recoverSlot(usableR, [], params), 0, 0, 2048, 1254, "lone")
+    }
+    function test_recover_slot_fully_covered_is_null() {
+        compare(Logic.recoverSlot(usableR, [{ x: 0, y: 0, w: 2048, h: 1254 }], params), null)
+        // only a hairline uncovered (thinner than the tolerance) is null too
+        compare(Logic.recoverSlot(usableR, [{ x: 0, y: 0, w: 2040, h: 1254 }], params), null)
+    }
+    function test_recover_slot_clips_others_to_rect() {
+        // a window poking left of the usable rect must not create a phantom column outside it
+        slotEq(Logic.recoverSlot(usableR, [{ x: -100, y: 0, w: 1124, h: 1254 }], params),
+               1024, 0, 1024, 1254, "clipped")
+    }
+    // Thin projected-edge rows just inside the slot must not be peeled one after another: the
+    // trim removes at most one gap band (< tol) per side. Old per-cell peel returned a bottom
+    // edge of 482 here, 45px short of the true slot {1059,20,626,507}.
+    function test_recover_slot_trim_peels_at_most_one_gap_band() {
+        var big = { x: 0, y: 0, w: 2560, h: 1554 }
+        var others = [{x:20,y:20,w:482,h:462},{x:20,y:492,w:482,h:1062},{x:512,y:20,w:537,h:507},
+                      {x:512,y:537,w:1173,h:1017},{x:1695,y:20,w:367,h:486},{x:2072,y:20,w:468,h:486},
+                      {x:1695,y:516,w:845,h:1038}]
+        var s = Logic.recoverSlot(big, others, params), tol = params.slotGapTolerance
+        verify(s !== null)
+        verify(s.y + s.h >= 527 - tol, "bottom edge within one gap band of the true slot: " + (s.y + s.h))
+        verify(s.x <= 1059 && s.x + s.w >= 1685 - tol && s.y <= 20, "contains the true slot within tol on every side")
+    }
+    function test_recover_slot_missing_param_still_rejects_hairline() {
+        compare(Logic.recoverSlot(usableR, [{ x: 0, y: 0, w: 2040, h: 1254 }], {}), null,
+                "missing slotGapTolerance still rejects a hairline")
+    }
+
+    // ---- layout(): fullscreen windows are placed in the recovered slot; every tile carries a
+    // stacking layer (0 backdrop, 1 tiled, 2 floating) and the fullscreen mode.
+    function fsInput(windows) {
+        return { monitors: [edp()],
+                 workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
+                 windows: windows, focusedMonitorName: "eDP-1", availW: 1632, params: params }
+    }
+    // eDP: R = 2048x1254, cell mini-map 308x188 → height-limited, k = 188/1254.
+    readonly property real kEdp: 188 / 1254
+    function test_fullscreen_tiled_lands_in_recovered_slot() {
+        var r = Logic.layout(fsInput([
+            { address: "0xT", cls: "teams", ax: 0, ay: 26, sw: 825, sh: 1254, workspaceId: 1, floating: false, fullscreen: 0 },
+            { address: "0xF", cls: "chrome", ax: 0, ay: 0, sw: 2048, sh: 1280, workspaceId: 1, floating: false, fullscreen: 2 }
+        ]))
+        var t = tilesByAddr(r, "0xT"), f = tilesByAddr(r, "0xF")
+        fuzzyCompare(f.x, t.x + t.w, 0.6, "starts where the neighbour ends")
+        fuzzyCompare(f.w, 1223 * kEdp, 0.6, "spans the uncovered width")
+        fuzzyCompare(f.h, 188, 0.6, "full usable height")
+        compare(f.layer, 1); compare(f.fullscreen, 2)
+        compare(t.layer, 1); compare(t.fullscreen, 0)
+        fuzzyCompare(t.w, 825 * kEdp, 0.6, "neighbour drawn from its real geometry")
+    }
+    function test_lone_fullscreen_still_fills_usable_rect() {
+        var r = Logic.layout(fsInput([
+            { address: "0xF", cls: "x", ax: 0, ay: 0, sw: 2048, sh: 1280, workspaceId: 1, floating: false, fullscreen: 2 }]))
+        var f = tilesByAddr(r, "0xF")
+        fuzzyCompare(f.h, 188, 0.5); fuzzyCompare(f.w, 2048 * kEdp, 0.6)
+        compare(f.layer, 1)
+    }
+    // Stale data: the others already cover everything → fill R but sit BELOW the tiled tiles.
+    function test_fullscreen_with_no_hole_is_backdrop() {
+        var r = Logic.layout(fsInput([
+            { address: "0xT", cls: "x", ax: 0, ay: 26, sw: 2048, sh: 1254, workspaceId: 1, floating: false, fullscreen: 0 },
+            { address: "0xF", cls: "x", ax: 0, ay: 0, sw: 2048, sh: 1280, workspaceId: 1, floating: false, fullscreen: 2 }]))
+        var f = tilesByAddr(r, "0xF")
+        fuzzyCompare(f.h, 188, 0.5); compare(f.layer, 0)
+        compare(tilesByAddr(r, "0xT").layer, 1)
+    }
+    // A floating window that is fullscreen has no slot: centred at 60% of R, floating layer.
+    function test_floating_fullscreen_is_centred_60_percent() {
+        var r = Logic.layout(fsInput([
+            { address: "0xF", cls: "x", ax: 0, ay: 0, sw: 2048, sh: 1280, workspaceId: 1, floating: true, fullscreen: 2 }]))
+        var f = tilesByAddr(r, "0xF"), b = boxById(r, 1)
+        fuzzyCompare(f.w, 0.6 * 2048 * kEdp, 0.6); fuzzyCompare(f.h, 0.6 * 188, 0.6)
+        fuzzyCompare(f.x - b.x, (b.w - f.w) / 2, 1.0, "horizontally centred in the box")
+        compare(f.layer, 2); compare(f.fullscreen, 2)
+    }
+    function test_layers_and_mode_are_carried() {
+        var r = Logic.layout(fsInput([
+            { address: "0xA", cls: "x", ax: 100, ay: 100, sw: 400, sh: 300, workspaceId: 1, floating: true, fullscreen: 0 },
+            { address: "0xB", cls: "x", ax: 600, ay: 100, sw: 400, sh: 300, workspaceId: 1, floating: false, fullscreen: 0 },
+            { address: "0xM", cls: "x", ax: 0, ay: 26, sw: 2048, sh: 1254, workspaceId: 1, floating: false, fullscreen: 1 }]))
+        compare(tilesByAddr(r, "0xA").layer, 2)
+        compare(tilesByAddr(r, "0xB").layer, 1)
+        compare(tilesByAddr(r, "0xM").fullscreen, 1, "maximized mode carried as 1")
+        // legacy boolean still means fullscreen (mode 2)
+        var legacy = Logic.layout(fsInput([{ address: "0xL", cls: "x", ax: 0, ay: 0, sw: 2048, sh: 1280,
+                                              workspaceId: 1, floating: false, fullscreen: true }]))
+        compare(tilesByAddr(legacy, "0xL").fullscreen, 2)
     }
 
 }

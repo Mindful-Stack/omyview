@@ -27,12 +27,13 @@ TestCase {
         wait(350)
     }
     function cleanup() { view.close() }
-    function tile() {
+    function tileOf(addr) {
         var children = view.testCanvas.children
         for (var i=0;i<children.length;i++)
-            if (children[i].model && children[i].model.address === "0x123") return children[i]
-        fail("Tile not found")
+            if (children[i].model && children[i].model.address === addr) return children[i]
+        fail("Tile not found: " + addr)
     }
+    function tile() { return tileOf("0x123") }
     function dragBy(dx, dy) {
         var t = tile(), p = t.mapToItem(tc, t.width/2, t.height/2)
         mousePress(tc, p.x, p.y, Qt.LeftButton)
@@ -184,6 +185,19 @@ TestCase {
     function dragOntoTarget(ws) {
         var source=view.testModel.get(0), target=view.testModel.get(1)
         dragBy(target.wx-source.wx+12,target.wy-source.wy+2)
+    }
+    // Size-agnostic alternative to dragOntoTarget: releases exactly on the target tile's centre
+    // (canvas-space) instead of a left-edge delta, which assumes near-equal tile sizes and
+    // overshoots when they are not (e.g. a fullscreen window's recovered slot vs. an ordinary
+    // tile).
+    function dragToCentreOf(targetIndex) {
+        var target = view.testModel.get(targetIndex)
+        var t = tile(), p = t.mapToItem(tc, t.width/2, t.height/2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x + 12, p.y + 2, 20)
+        var goal = view.testCanvas.mapToItem(tc, target.wx + target.ww/2, target.wy + target.wh/2)
+        mouseMove(tc, goal.x, goal.y, 20)
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
     }
     // A tiled drop replays a native drag-and-drop as ONE atomic Lua dispatch (float → cursor →
     // un-float); nothing else is sent, and the tile holds the drop point until the compositor's
@@ -428,6 +442,211 @@ TestCase {
         verify(!shadowOf(t).visible, "no shadow under the drag ghost")
         view.close()
         mouseRelease(tc,p.x+30,p.y+10,Qt.LeftButton)
+    }
+
+    // The floating window is the FIRST model entry, the tiled one is appended later (a later
+    // sibling paints on top by default). Without a layer-based z the floating tile is hidden.
+    function test_floating_tile_stacks_above_later_tiled_tile() {
+        client.floating = true; view.rebuild()
+        addTarget(1)                               // tiled, index 1
+        var floating = tileOf("0x123"), tiled = tileOf("0x456")
+        verify(floating.z > tiled.z, "floating z " + floating.z + " must exceed tiled z " + tiled.z)
+        compare(view.testModel.get(0).layer, 2); compare(view.testModel.get(1).layer, 1)
+        compare(view.testModel.get(0).fsPending, false)
+        compare(view.testModel.get(1).fullscreen, 0)
+    }
+    // Hover raises a tile within its layer only: a hovered tiled tile stays below a floating one.
+    function test_hovered_tiled_tile_stays_below_floating() {
+        client.floating = true; view.rebuild()
+        addTarget(1)
+        var floating = tileOf("0x123"), tiled = tileOf("0x456")
+        var away = tiled.mapToItem(tc, -30, -30), p = tiled.mapToItem(tc, tiled.width/2, tiled.height/2)
+        mouseMove(tc, away.x, away.y, 20)
+        mouseMove(tc, p.x, p.y, 20)
+        tryVerify(function () { return tiled.z === 11 }, 500)          // hovered within layer 1
+        verify(floating.z > tiled.z, "floating z " + floating.z + " must exceed hovered tiled z " + tiled.z)
+        mouseMove(tc, away.x, away.y, 20)
+        tryVerify(function () { return tiled.z === 10 }, 500)
+    }
+
+    function badgeOf(addr) {
+        var t = tileOf(addr), kids = t.children
+        for (var i=0;i<kids.length;i++) if (kids[i].objectName === "fsBadge") return kids[i]
+        fail("badge not found")
+    }
+    // The badge shows on a fullscreen tile; clicking it dispatches ONE guarded un-fullscreen
+    // chunk, never a drag or a focus, hides the badge optimistically, and leaves no drag state.
+    function test_badge_click_unfullscreens_without_drag_or_focus() {
+        client.fullscreen = 2; view.rebuild()
+        addTarget(1)
+        var badge = badgeOf("0x123")
+        verify(badge.visible, "badge shown while fullscreen")
+        var p = badge.mapToItem(tc, badge.width/2, badge.height/2)
+        mouseClick(tc, p.x, p.y, Qt.LeftButton)
+        compare(view.compositor.commands.length, 1)
+        var cmd = view.compositor.commands[0]
+        verify(cmd.indexOf('hl.dsp.window.fullscreen(') >= 0)
+        verify(cmd.indexOf('"address:0x123"') >= 0)
+        verify(cmd.indexOf('nowW.address ~= prevW.address') >= 0, "focus restored only if it moved")
+        compare((cmd.match(/hl\.dsp\.focus\(/g) || []).length, 1, "exactly one (guarded) focus dispatch")
+        verify(cmd.indexOf('window.float(') < 0, "not a drag")
+        compare(view.draggingAddress, "", "a badge press never starts a drag")
+        verify(view.pendingFullscreen["0x123"] !== undefined)
+        verify(!badge.visible, "badge hidden while pending")
+        view.rebuild()                                   // stale data: still fullscreen 2
+        verify(!badge.visible, "stays hidden until confirmed")
+        client.fullscreen = 0; view.rebuild()
+        verify(view.pendingFullscreen["0x123"] === undefined, "confirmed by fresh data")
+        verify(!badge.visible, "now hidden because the window is no longer fullscreen")
+    }
+    function test_badge_returns_when_unfullscreen_is_rejected() {
+        client.fullscreen = 2; view.rebuild()
+        var badge = badgeOf("0x123"), p = badge.mapToItem(tc, badge.width/2, badge.height/2)
+        mouseClick(tc, p.x, p.y, Qt.LeftButton)
+        verify(!badge.visible)
+        view.pendingFullscreen["0x123"].deadline = Date.now() - 1
+        view.rebuild()
+        verify(view.pendingFullscreen["0x123"] === undefined)
+        verify(badge.visible, "rejected: the window is still fullscreen, badge back")
+    }
+    // A new grab (mousePress on the tile body) supersedes a pending un-fullscreen for that
+    // address, exactly as it supersedes a pending move: the badge returns immediately.
+    function test_grab_supersedes_pending_unfullscreen() {
+        client.fullscreen = 2; view.rebuild()
+        var badge = badgeOf("0x123"), p = badge.mapToItem(tc, badge.width/2, badge.height/2)
+        mouseClick(tc, p.x, p.y, Qt.LeftButton)
+        verify(view.pendingFullscreen["0x123"] !== undefined, "un-fullscreen pending")
+        verify(!badge.visible, "badge hidden while pending")
+        var t = tileOf("0x123"), body = t.mapToItem(tc, 8, t.height - 8)   // bottom-left, away from the badge
+        mousePress(tc, body.x, body.y, Qt.LeftButton)
+        verify(view.pendingFullscreen["0x123"] === undefined, "grab clears the pending un-fullscreen")
+        verify(badge.visible, "badge shown again once the pending entry is cleared")
+        view.close()                                    // release would focus+close; not under test here
+        mouseRelease(tc, body.x, body.y, Qt.LeftButton)
+    }
+    // A plain click on the tile body still focuses + closes and does not touch fullscreen.
+    function test_tile_body_click_on_fullscreen_tile_focuses_only() {
+        client.fullscreen = 2; view.rebuild()
+        var t = tileOf("0x123"), p = t.mapToItem(tc, 8, t.height - 8)     // bottom-left, away from the badge
+        mouseClick(tc, p.x, p.y, Qt.LeftButton)
+        compare(view.compositor.commands.length, 1)
+        verify(view.compositor.commands[0].indexOf('hl.dsp.focus(') >= 0)
+        verify(view.compositor.commands[0].indexOf('fullscreen') < 0)
+    }
+    // A middle click on the badge must be swallowed, not fall through to the drag area's
+    // close-window branch. Contrast with a middle click on the tile body, which still closes.
+    function test_middle_click_on_badge_does_not_close_window() {
+        client.fullscreen = 2; view.rebuild()
+        var badge = badgeOf("0x123"), p = badge.mapToItem(tc, badge.width/2, badge.height/2)
+        mouseClick(tc, p.x, p.y, Qt.MiddleButton)
+        compare(view.compositor.commands.length, 0, "middle click on the badge must not close the window")
+        var t = tileOf("0x123"), body = t.mapToItem(tc, 8, t.height - 8)
+        mouseClick(tc, body.x, body.y, Qt.MiddleButton)
+        compare(view.compositor.commands.length, 1)
+        verify(view.compositor.commands[0].indexOf('window.close(') >= 0, "middle click on the tile body still closes")
+    }
+
+    // A fullscreen window can be re-tiled inside its own workspace (previously refused): one
+    // atomic insert that records and re-applies fullscreen, acknowledged as soon as the ANCHOR's
+    // geometry changes — the window itself ends fullscreen in the same rect, so its own
+    // geometry cannot be the signal.
+    function test_fullscreen_window_retile_acknowledged_by_anchor_geometry() {
+        client.fullscreen = 2; view.rebuild()
+        var other = addTarget(1)
+        // dragOntoTarget's left-edge delta assumes source and target tiles are near-equal in
+        // size; the fullscreen window's recovered slot is not (it's the whole uncovered band),
+        // so release exactly on the target's centre instead (canvas-space, size-agnostic).
+        dragToCentreOf(1)
+        compare(view.compositor.commands.length, 1, "re-tile dispatched (was refused before)")
+        var cmd = view.compositor.commands[0]
+        verify(cmd.indexOf('ownMode') >= 0 && cmd.indexOf('hl.dsp.window.fullscreen(') >= 0)
+        var pending = view.pendingMoves[client.address]
+        verify(pending !== undefined && pending.before.anchor.address === "0x456")
+        view.rebuild()                                     // nothing changed yet
+        verify(view.pendingMoves[client.address] !== undefined, "still pending on stale data")
+        other.at = [1000, 1740]; other.size = [600, 200]   // the anchor got split
+        view.rebuild()
+        verify(view.pendingMoves[client.address] === undefined, "anchor change acknowledges")
+    }
+    // dragOntoTarget's left-edge delta overshoots for this geometry (lands in workspace 2, not
+    // 1), so use dragToCentreOf and assert the drop actually landed where intended and reached
+    // pending.before before exercising the deadline path.
+    function test_retile_pending_kept_until_deadline_when_nothing_changes() {
+        client.fullscreen = 2; view.rebuild()
+        addTarget(1)
+        dragToCentreOf(1)
+        var pending = view.pendingMoves[client.address]
+        verify(pending !== undefined && pending.workspaceId === 1, "landed in the target's workspace")
+        verify(pending.before.anchor.address === "0x456", "reached pending.before")
+        view.rebuild(); view.rebuild()
+        verify(view.pendingMoves[client.address] !== undefined)
+        view.pendingMoves[client.address].deadline = Date.now() - 1
+        view.rebuild()
+        verify(view.pendingMoves[client.address] === undefined)
+    }
+    // A fullscreen tile is an ordinary anchor: a tiled window dropped on it previews a side and
+    // dispatches the insert (previously the fullscreen tile was excluded from the candidates).
+    function test_fullscreen_tile_is_an_anchor() {
+        var other = addTarget(1); other.fullscreen = 2; view.rebuild()
+        var target = view.testModel.get(1)
+        var t = tile(), p = t.mapToItem(tc, t.width/2, t.height/2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x+12, p.y+2, 20)
+        var goal = view.testCanvas.mapToItem(tc, target.wx + target.ww*0.9, target.wy + target.wh/2)
+        mouseMove(tc, goal.x, goal.y, 20)
+        compare(view.dropTargetAddress, "0x456", "fullscreen tile previews as an anchor")
+        compare(view.dropTargetSide, "right")
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        compare(view.compositor.commands.length, 1)
+        verify(view.compositor.commands[0].indexOf('"address:0x456"') >= 0)
+    }
+    // Same-workspace eligibility uses the tile's model rect (the recovered slot), not
+    // _tileRect(win) — which for a fullscreen window is the whole cell and would swallow every
+    // drop as "inside its own slot". Real fullscreen-sized geometry on the client (not the
+    // stale pre-fullscreen at/size) so _tileRect(win) WOULD span the cell if used.
+    function test_fullscreen_window_own_slot_is_the_recovered_slot() {
+        client.at = [0, 1466]; client.size = [1920, 1054]
+        client.fullscreen = 2; view.rebuild()
+        addTarget(1)
+        var own = view.tileRectFor("0x123"), target = view.testModel.get(1)
+        verify(own.h < view.boxes[0].h - 2 * view.params.cellInset - 1, "recovered slot, not the whole cell")
+        var plan = view.tiledDropPlan("0x123", view._windowByAddress["0x123"], 1,
+                                      target.wx + target.ww/2, target.wy + target.wh/2)
+        verify(plan !== null && plan.anchor === "0x456")
+    }
+    // A backdrop tile (fullscreen with no recoverable slot — another window already covers the
+    // whole usable rect) never anchors a drop: it has no slot geometry for the split-side hit
+    // test to work against.
+    // A backdrop tile (fullscreen window whose slot is unrecoverable: its neighbours cover the
+    // usable rect) is drawn over the whole cell but must never anchor. Its rect ties with the
+    // tiled half under the pointer at distance 0, and tiledDropPlan gives ties to the LATER
+    // candidate — so without the layer-0 exclusion the fullscreen window (appended last) wins.
+    function test_backdrop_tile_does_not_anchor() {
+        var ws = view.compositor.workspaces.values, mon = ws[0].monitor
+        ws[0].toplevels.values = []                    // the dragged window lives on workspace 2
+        ws[1].toplevels.values = [{lastIpcObject: client}]
+        function win(addr, at, size, fs) {
+            return {lastIpcObject: {address: addr, at: at, size: size, floating: false,
+                                    title: addr, "class": "test", fullscreen: fs}}
+        }
+        ws[0].toplevels.values = [win("0xA", [0, 1466], [960, 1054], 0),
+                                  win("0xB", [960, 1466], [960, 1054], 0),
+                                  win("0xF", [0, 1440], [1920, 1080], 2)]
+        view.rebuild()
+        var byAddr = {}
+        for (var i = 0; i < view.testModel.count; i++) byAddr[view.testModel.get(i).address] = view.testModel.get(i)
+        compare(byAddr["0xF"].layer, 0, "precondition: the fullscreen tile is a backdrop")
+        compare(byAddr["0xA"].layer, 1)
+        var t = tileOf("0x123"), p = t.mapToItem(tc, t.width/2, t.height/2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x + 12, p.y + 2, 20)
+        var A = byAddr["0xA"]
+        var goal = view.testCanvas.mapToItem(tc, A.wx + A.ww/2, A.wy + A.wh/2)
+        mouseMove(tc, goal.x, goal.y, 20)
+        compare(view.dropTargetWs, 1)
+        compare(view.dropTargetAddress, "0xA", "the tiled half anchors, never the backdrop")
+        view.close()
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
     }
 
 }

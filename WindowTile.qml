@@ -17,6 +17,12 @@ Item {
     property bool floating: false        // floating windows get a soft shadow, like on the desktop
     property string fontFamily: ""
     property int titleSize: 10
+    // Named tileLayer, not layer: Item already has a FINAL "layer" property group (layer.effect
+    // etc.) that QML refuses to shadow.
+    property int tileLayer: 1            // 0 backdrop | 1 tiled | 2 floating — stacking inside the cell
+    property int fullscreen: 0           // Hyprland mode: 0 none, 1 maximized, 2 fullscreen
+    property bool fullscreenPending: false   // un-fullscreen dispatched; badge hidden until confirmed
+    signal unfullscreenRequested()
 
     property bool dropTarget: false
     // "left"|"right"|"top"|"bottom": which half a dragged tiled window would take here
@@ -48,7 +54,8 @@ Item {
     HoverHandler { id: hh; enabled: !tile.dragging }
     scale: dragging ? 1 : (hh.hovered ? 1.03 : 1)
     transformOrigin: Item.Center
-    z: dragging ? 99999 : (hh.hovered ? 10 : 0)
+    // Hover raises a tile within its own layer only; dragging is the single global exception.
+    z: dragging ? 99999 : tileLayer * 10 + (hh.hovered ? 1 : 0)
     opacity: dragging ? dragOpacity : 1
     Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
     Behavior on opacity { NumberAnimation { duration: 100 } }
@@ -121,7 +128,8 @@ Item {
             id: lbl; anchors.centerIn: parent; color: "#fff"
             font.family: tile.fontFamily; font.pixelSize: tile.titleSize
             elide: Text.ElideRight; width: parent.width - 8
-            text: tile.title.length ? tile.title : tile.cls
+            text: (tile.fullscreen === 2 ? "Fullscreen · " : tile.fullscreen === 1 ? "Maximized · " : "")
+                  + (tile.title.length ? tile.title : tile.cls)
         }
     }
 
@@ -135,5 +143,37 @@ Item {
         y: tile.dropSide === "bottom" ? parent.height / 2 : 0
         width: (tile.dropSide === "left" || tile.dropSide === "right") ? parent.width / 2 : parent.width
         height: (tile.dropSide === "top" || tile.dropSide === "bottom") ? parent.height / 2 : parent.height
+    }
+
+    // fullscreen badge: a drawn four-corner glyph in the top-right corner while the window is
+    // fullscreen/maximized. Its own MouseArea stacks above the drag area (z 1), so a badge press
+    // never starts a drag, never counts as a tile click, and a middle click on it is swallowed
+    // rather than closing the window. Left click → un-fullscreen.
+    Rectangle {
+        id: badge
+        objectName: "fsBadge"
+        visible: tile.fullscreen > 0 && !tile.fullscreenPending
+        anchors { top: parent.top; right: parent.right; margins: 3 }
+        width: 16; height: 16; radius: 4
+        color: tile.bg
+        border.width: 1; border.color: tile.borderColor
+        z: 1
+        Repeater {
+            model: 4
+            Item {
+                required property int index
+                readonly property bool onRight: index % 2 === 1
+                readonly property bool onBottom: index >= 2
+                x: onRight ? 9 : 3; y: onBottom ? 9 : 3; width: 4; height: 4
+                Rectangle { width: 4; height: 1; color: tile.fg; y: parent.onBottom ? 3 : 0 }
+                Rectangle { width: 1; height: 4; color: tile.fg; x: parent.onRight ? 3 : 0 }
+            }
+        }
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+            preventStealing: true
+            onClicked: function (m) { if (m.button === Qt.LeftButton) tile.unfullscreenRequested() }
+        }
     }
 }
