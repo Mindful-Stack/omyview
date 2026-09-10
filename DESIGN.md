@@ -286,15 +286,17 @@ One vocabulary: a `motion` block on the Overview root owns every duration (fast 
 160 ms, enter 200 ms, exit 120 ms) and easing (`OutCubic` for movement, `OutQuad` for hover and
 lift, a small-overshoot `OutBack` entrance); tiles receive it as a property. Policy: config
 `motion` is `"auto"` (follow Hyprland `animations:enabled`, probed with `hyprctl -j getoption`
-once per open and cached in `OmyviewConfig.motionEffective`), `"full"` or `"off"` (every
-duration 0, every Behavior disabled). Open/close are explicit animations; the `PanelWindow`
-stays mapped while `card.opacity > 0` and drops keyboard focus the moment `opened` clears.
-Layout motion is `Behavior`s on tile, box, badge and card geometry, gated on
-`root.layoutMotion` (motion on and the entrance not running, so the first layout and the open
-settle place rather than glide). A tile's glide runs on `targetX`/`targetY`, not on `x`/`y`:
-the grab detaches `x`/`y` with a plain write (`beginGrab`) and the drag owns them, so a glide
-still in flight can never fight the pointer; release parks the targets at the drop point and
-rebinds them to the model, which is the settle. Boxes are a reconciled `ListModel`
+once per open, cached in `OmyviewConfig.hyprAnimations` and folded into the derived
+`motionEffective`), `"full"` or `"off"` (every duration 0, every Behavior disabled). Open/close
+are explicit animations; the `PanelWindow` stays mapped while `card.opacity > 0` and drops
+keyboard focus the moment `opened` clears. Layout motion is `Behavior`s on tile, box, badge and
+card geometry, gated on `root.layoutMotion` (motion on, the picker open, and the entrance not
+running — so the first layout and the open settle place rather than glide, and reconcile
+rebuilds after close start no glide that could finish under the next entrance). A tile's glide
+runs on `targetX`/`targetY`, not on `x`/`y`: the grab detaches `x`/`y` with a plain write
+(`beginGrab`) and the drag owns them, so a glide still in flight can never fight the pointer;
+release parks the targets at the drop point and rebinds them to the model, which is the settle.
+Boxes are a reconciled `ListModel`
 (`applyBoxes`, keyed by workspace id) for the same reason tiles are: recreated delegates cannot
 glide. `applyTiles`/`applyBoxes` compare a row before `set`, so an identical rebuild emits
 nothing. Drop wash and insertion half fade in/out on `motion.fast` and keep their last

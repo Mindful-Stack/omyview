@@ -88,7 +88,8 @@ workspace-switch animation (Hyprland's own).
 2. Open/close: scrim and card fade/scale, window stays visible through the exit, focus released
    at once. README gains the `no_anim` layer rule.
 3. Boxes as a reconciled `ListModel` (pure refactor, no motion). Then reconcile motion: tile
-   x/y/w/h Behaviors gated on `!dragging`; box, badge and card-size glides; settle after a
-   drop. Tests: exact x during drag, glide after release, no motion on an identical rebuild.
+   glide targets (`targetX`/`targetY`, see the mechanics bullet) plus w/h Behaviors; box, badge
+   and card-size glides; settle after a drop. Tests: exact x during drag, glide after release,
+   no motion on an identical rebuild.
 4. Drop wash and insertion half fades; tile appear animation.
 5. Live feel pass on light and dark themes; tune overshoot or drop it.
