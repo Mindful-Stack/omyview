@@ -15,7 +15,7 @@ qml = re.sub(r'Style\.space\((\d+)\)', r'\1', qml)
 qml = qml.replace('Hyprland.', 'compositor.').replace('target: Hyprland', 'target: compositor')
 qml = qml.replace('Quickshell.screens', '[]').replace('ToplevelManager.toplevels', 'null')
 qml = qml.replace('PanelWindow {', 'Item {')
-qml = re.sub(r'^\s*(screen: root.targetScreen|WlrLayershell\..*|exclusionMode:.*|color: "transparent")\n', '\n', qml, flags=re.M)
+qml = re.sub(r'^\s*(screen: root.targetScreen|WlrLayershell\..*|exclusionMode:.*|color: "transparent"|mask: .*|Region \{ id: emptyRegion \})\n', '\n', qml, flags=re.M)
 qml = qml.replace('anchors { top: true; bottom: true; left: true; right: true }', 'width: 1200; height: 800')
 qml = qml.replace('id: root', '''id: root
     property alias testModel: tilesModel

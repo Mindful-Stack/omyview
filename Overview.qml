@@ -60,14 +60,13 @@ Item {
         readonly property int exit:   enabled ? Math.round(120 * scale) : 0
         readonly property int move: Easing.OutCubic       // layout movement
         readonly property int hover: Easing.OutQuad       // hover, lift, release
-        readonly property int entrance: Easing.OutBack    // card entrance; overshoot tuned in Task 8
+        readonly property int entrance: Easing.OutBack    // overshoot is deliberately small; raise towards Qt's 1.70158 default if the entrance feels flat
         readonly property real overshoot: 1.2             // Qt default is 1.70158; "small"
     }
     // Layout Behaviors (frame, tiles, boxes, card size) run only when motion is on and the
     // entrance is not playing: delegates are created at their final geometry, and the settle
-    // rebuilds during the first 200 ms must place, not glide. `enterAnim` arrives in Task 4;
-    // until then this is `motion.enabled` alone. And never while closed — reconcile rebuilds
-    // keep running after close, and a glide started then would finish under the next entrance.
+    // rebuilds during the first 200 ms must place, not glide. And never while closed — reconcile
+    // rebuilds keep running after close, and a glide started then would finish under the next entrance.
     readonly property bool layoutMotion: motion.enabled && opened && !enterAnim.running
 
     // headerH is the chip band per monitor group; logic.js lays it out only when more than
@@ -139,6 +138,9 @@ Item {
     // addr -> { mode, deadline }: an un-fullscreen was dispatched; the badge stays hidden until
     // fresh data reports that mode, or the deadline passes (rejected: badge returns).
     property var pendingFullscreen: ({})
+    // The first rebuild after open re-sets every row: a glide still running at close can have
+    // overwritten a later reconcile write, and rowDiffers would then never correct it.
+    property bool _reassertLayout: false
     property var dragTile: null
     property int dropTargetWs: -1
     property string dropTargetAddress: ""
@@ -374,7 +376,7 @@ Item {
                         title: titleFor(tu.address), cls: clsFor(tu.address),
                         wsid: tu.workspaceId, floating: floatingFor(tu.address),
                         layer: tu.layer, fullscreen: tu.fullscreen }
-            if (rowDiffers(tilesModel.get(iu), row)) tilesModel.set(iu, row)
+            if (root._reassertLayout || rowDiffers(tilesModel.get(iu), row)) tilesModel.set(iu, row)
         }
         for (var rmi = 0; rmi < d.removes.length; rmi++) {
             if (root.draggingAddress === d.removes[rmi] || pendingMoves[d.removes[rmi]]) continue // cancel handled elsewhere
@@ -406,7 +408,7 @@ Item {
             seen[b.workspaceId] = true
             var idx = boxIndex(b.workspaceId)
             if (idx < 0) boxesModel.append(row)
-            else if (rowDiffers(boxesModel.get(idx), row)) boxesModel.set(idx, row)
+            else if (root._reassertLayout || rowDiffers(boxesModel.get(idx), row)) boxesModel.set(idx, row)
         }
         for (var r = boxesModel.count - 1; r >= 0; r--)
             if (!seen[boxesModel.get(r).workspaceId]) boxesModel.remove(r)
@@ -492,7 +494,9 @@ Item {
         config.probeMotion()                       // async; result lands for this or the next open
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
         _showVisuals(true)                         // before the first rebuild: layout motion is gated on it
+        _reassertLayout = true
         rebuild()          // instant paint from current data
+        _reassertLayout = false
         ensureSelectedVisible()
         scheduleRebuild()  // then settle as fresh toplevel geometry lands
         Qt.callLater(function () { keyCatcher.forceActiveFocus() })
@@ -589,6 +593,10 @@ Item {
         WlrLayershell.namespace: "omyview"
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        // Pointer input is released the moment `opened` drops, like keyboard focus: an empty
+        // input region makes the fading surface click-through.
+        mask: root.opened ? null : emptyRegion
+        Region { id: emptyRegion }
         exclusionMode: ExclusionMode.Ignore
 
         Rectangle { id: scrimRect; anchors.fill: parent; color: root.scrim; visible: config.scrim; opacity: 0 }
@@ -708,7 +716,7 @@ Item {
                                 text: root.wsLabel(boxItem.model.workspaceId)
                                 color: root.foreground
                                 opacity: 0.10
-                                font.pixelSize: Math.round(boxItem.model.bh * 0.45)
+                                font.pixelSize: Math.round(boxItem.height * 0.45)
                                 font.weight: Font.DemiBold
                             }
                             MouseArea {   // click empty area of a workspace => jump
@@ -797,9 +805,10 @@ Item {
                                 targetX = Qt.binding(function () { return model.wx })
                                 targetY = Qt.binding(function () { return model.wy })
                             }
-                            // New while showing → appear. Not at open (the entrance covers that),
-                            // not while closed (reconcile rebuilds can still add rows then).
-                            Component.onCompleted: if (root.opened && root.layoutMotion) appear()
+                            // New while showing → appear. Not at open (the entrance covers that,
+                            // and layoutMotion already requires opened), not while closed
+                            // (reconcile rebuilds can still add rows then).
+                            Component.onCompleted: if (root.layoutMotion) appear()
                             Component.onDestruction: {
                                 if (root.dragTile === windowTile) root.endDrag()
                             }

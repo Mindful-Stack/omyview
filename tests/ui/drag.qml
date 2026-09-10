@@ -301,7 +301,7 @@ TestCase {
         view.close()
         mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
     }
-    // Re-grabbing while the 100ms release animation is still running must not shift the tile:
+    // Re-grabbing while the release animation (motion.fast, 90 ms) is still running must not shift the tile:
     // the Scale origin moves to the new grab point while the scale is still on its way back
     // to 1, which would displace the rendered tile by (grab − oldOrigin)·(1 − scale).
     function test_regrab_during_release_animation_keeps_grab_point_under_pointer() {
