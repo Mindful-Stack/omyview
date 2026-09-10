@@ -1,6 +1,8 @@
 -- In-memory stand-in for Hyprland's `hl` table, just enough for the chunks logic.js builds.
--- Dispatches mutate window state and are logged; `hl.__fail_on = "window.float"` makes that
--- dispatcher raise a real Lua error (every time, or only its `hl.__fail_nth` occurrence). Geometry never re-lays out (no dwindle here) and focus
+-- Dispatches mutate window state and are logged. Like Hyprland's, `hl.dispatch` never raises:
+-- it returns { ok = true } or, when `hl.__fail_on = "window.float"` names the dispatcher (every
+-- time, or only its `hl.__fail_nth` occurrence), { ok = false, error = "..." } — the chunk's own
+-- run() guard is what turns that into the failure path. Geometry never re-lays out (no dwindle here) and focus
 -- is a constant: tests assert dispatch order and end state, never geometry.
 -- A new dispatcher used by a chunk must be added to `hl.dsp` AND applied in `hl.dispatch`;
 -- never stub it as a no-op, or "ends tiled"-style checks become vacuous.
@@ -52,7 +54,7 @@ function M.new(opts)
     hl.__log[#hl.__log + 1] = desc
     hl.__seen[desc.name] = (hl.__seen[desc.name] or 0) + 1
     if hl.__fail_on == desc.name and (hl.__fail_nth == nil or hl.__fail_nth == hl.__seen[desc.name]) then
-      error("injected failure in " .. desc.name)
+      return { ok = false, error = "injected failure in " .. desc.name, level = "error", code = "C_INVARG" }
     end
     local a = desc.args or {}
     local w = a.window and byAddress(a.window) or nil
@@ -68,6 +70,7 @@ function M.new(opts)
     elseif desc.name == "cursor.move" then
       hl.__cursor = { x = a.x, y = a.y }
     end
+    return { ok = true, pass_event = false }
   end
   return hl
 end

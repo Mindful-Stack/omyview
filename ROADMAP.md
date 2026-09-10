@@ -65,6 +65,9 @@ consumer-side install + SUPER+P bind.
   (`keepLoaded: false`), so nothing in `Overview.qml` may be required to *finish* an
   operation — `pendingMoves` is optimistic display state only. Chunk failures are printed to
   the Hyprland log (`[Lua] omyview: … failed: …`) and shown as a notification.
+- **`hl.dispatch` never raises** (0.56.2 `hlDispatch`): a failed dispatcher returns
+  `{ ok = false, error = … }`. Every chunk defines `run(d)` that raises on that inside its pcall;
+  dispatch a guarded step through `run(`, never bare `hl.dispatch(` (the shape test enforces it).
 - `tests/lua-check.sh` runs the generated chunks against a mock `hl` (`tests/lua/`); a new
   dispatcher used by a chunk must be added to the mock, never stubbed as a no-op.
 - Coalesced refresh: an event while the settle timer runs *owes* a refresh on the next tick.

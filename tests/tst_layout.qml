@@ -486,7 +486,7 @@ TestCase {
         verify(risky >= 0, "risky steps capture ok/err")
         var riskyEnd = lua.indexOf('end)', lua.indexOf('cursor.move(', risky))
         verify(riskyEnd > risky, "the cursor move is the last risky step")
-        var unfloat = lua.indexOf('if fw and fw.floating then hl.dispatch(hl.dsp.window.float(')
+        var unfloat = lua.indexOf('if fw and fw.floating then run(hl.dsp.window.float(')
         verify(unfloat > riskyEnd, "un-float re-reads floating state and runs after the pcall")
         verify(lua.indexOf('local function step(f) local g, e = pcall(f) if not g then ok, err = false, err or e end end') > riskyEnd,
                "cleanup steps are guarded and fold their failure into ok/err")
@@ -505,7 +505,7 @@ TestCase {
         var guard = lua.indexOf('local layout = hl.get_config("general.layout")')
         verify(guard >= 0 && guard < lua.indexOf('smart_split = true'), "layout read before any dwindle config change")
         verify(lua.indexOf('if layout ~= nil and layout ~= "dwindle" then') >= 0, "unknown key (nil) keeps the dwindle path")
-        var fb = lua.indexOf('if not same then hl.dispatch(hl.dsp.window.move({ workspace = "3", follow = false, window = sel })) end', guard)
+        var fb = lua.indexOf('if not same then run(hl.dsp.window.move({ workspace = "3", follow = false, window = sel })) end', guard)
         verify(fb > guard && fb < lua.indexOf('smart_split = true'), "fallback is a plain silent move, before the dwindle path")
         verify(lua.lastIndexOf('local ok, err = pcall(function()', fb) > guard && lua.indexOf('if not ok then', fb) < lua.indexOf('smart_split = true'),
                "the fallback move is guarded and reported too")
@@ -518,9 +518,26 @@ TestCase {
         compare(Logic.indexOfWorkspace(boxes, 9), -1)
         compare(Logic.indexOfWorkspace([], 2), -1)
     }
+    // hl.dispatch never raises: a failed dispatcher returns { ok = false, error }. Every chunk
+    // defines run() to raise on that inside its pcall, and dispatches its steps through it.
     function test_every_chunk_reports_swallowed_errors() {
-        verify(Logic.unfullscreenLua("0xabc").indexOf('un-fullscreen failed') >= 0)
-        verify(Logic.floatingMoveLua("0xabc", 2, { x: 1, y: 2 }).indexOf('floating move failed') >= 0)
+        var chunks = [Logic.unfullscreenLua("0xabc"), Logic.floatingMoveLua("0xabc", 2, { x: 1, y: 2 }),
+                      Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 })]
+        for (var i = 0; i < chunks.length; i++) {
+            var c = chunks[i], guard = c.indexOf('local function run(d) local r = hl.dispatch(d) if r and r.ok == false then error(tostring(r.error), 0) end return r end')
+            verify(guard >= 0 && guard < c.indexOf('pcall(function()'), "chunk " + i + " defines run() before its first pcall")
+            // Every `local ok, err = pcall(...)` … `if not ok then` span (risky steps + cleanup)
+            // dispatches through run(); only the best-effort focus/cursor restore stays raw.
+            var at = 0, spans = 0
+            while ((at = c.indexOf('local ok, err = pcall(function()', at)) >= 0) {
+                var body = c.substring(at, c.indexOf('if not ok then', at))
+                verify(body.indexOf('hl.dispatch(') < 0, "chunk " + i + " span " + spans + ": guarded steps dispatch through run()")
+                at += 10; spans++
+            }
+            verify(spans >= 1, "chunk " + i + " has a guarded span")
+        }
+        verify(chunks[0].indexOf('un-fullscreen failed') >= 0)
+        verify(chunks[1].indexOf('floating move failed') >= 0)
         var r = Logic.reportLua('thing')
         verify(r.indexOf('if not ok then') === 0 && r.indexOf('tostring(err)') >= 0)
         verify(r.indexOf('pcall(function() hl.notification.create(') >= 0, "notification API itself guarded (older Hyprland)")

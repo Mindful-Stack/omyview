@@ -294,6 +294,15 @@ function tiledDropPlan(candidates, sameWorkspace, own, cx, cy) {
     return { anchor: best.address, side: dropSide(best, cx, cy) }
 }
 
+// Lua statement defining `run(d)`: dispatch `d` and raise when the compositor reports failure.
+// hl.dispatch never raises (Hyprland 0.56.2, LuaBindingsToplevel.cpp hlDispatch): a failed
+// dispatcher — even one that hit a Lua error internally — comes back as { ok = false,
+// error = "..." }. Raising inside our pcall turns that into the failure path: the sequence
+// stops, the guarded cleanup runs, and reportLua names the failed step.
+function dispatchGuardLua() {
+    return 'local function run(d) local r = hl.dispatch(d) if r and r.ok == false then error(tostring(r.error), 0) end return r end'
+}
+
 // Lua statements that report a failure captured as `ok, err` (from pcall) for the operation
 // `what`: to the compositor log (Hyprland rebinds `print` to its log with a [Lua] prefix) and
 // as an on-screen notification (guarded: hl.notification is missing on older Hyprland). Errors
@@ -345,11 +354,12 @@ function tiledInsertLua(addr, targetWs, placement) {
         '  local anchorSel = ' + anchorSel + '\n' +
         '  local prevW = hl.get_active_window()\n' +
         '  local cur = hl.get_cursor_pos()\n' +
+        '  ' + dispatchGuardLua() + '\n' +
         '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
         '  local layout = hl.get_config("general.layout")\n' +
         '  if layout ~= nil and layout ~= "dwindle" then\n' +
         '    local ok, err = pcall(function()\n' +
-        '      if not same then hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
+        '      if not same then run(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
         '    end)\n' +
         '    ' + reportLua('tiled insert') + '\n' +
         '    ' + restoreFocusLua('prevW', 'cur') + '\n' +
@@ -373,9 +383,9 @@ function tiledInsertLua(addr, targetWs, placement) {
         '  local ok, err = pcall(function()\n' +
         '    if fsSel then ' + fullscreenBodyLua('fsSel', '0') + ' end\n' +
         '    ' + fullscreenBodyLua('sel', '0') + '\n' +
-        '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
+        '    run(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
         '    if not same then\n' +
-        '      hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel }))\n' +
+        '      run(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel }))\n' +
         '    end\n' +
         '    local x, y = ' + gx + ', ' + gy + '\n' +
         '    local a = anchorSel and hl.get_window(anchorSel) or nil\n' +
@@ -387,7 +397,7 @@ function tiledInsertLua(addr, targetWs, placement) {
         '      elseif "' + side + '" == "top" then y = a.at.y + inset\n' +
         '      elseif "' + side + '" == "bottom" then y = a.at.y + a.size.y - 1 - inset end\n' +
         '    end\n' +
-        '    hl.dispatch(hl.dsp.cursor.move({ x = math.floor(x + 0.5), y = math.floor(y + 0.5) }))\n' +
+        '    run(hl.dsp.cursor.move({ x = math.floor(x + 0.5), y = math.floor(y + 0.5) }))\n' +
         '  end)\n' +
         // Cleanup. On success the un-float IS the re-tile (at the cursor). Each step re-reads
         // state and is guarded on its own, so a failure above — or in an earlier cleanup step —
@@ -395,7 +405,7 @@ function tiledInsertLua(addr, targetWs, placement) {
         // The window was tiled on entry, so any floating state here is ours to undo. A failing
         // cleanup step folds into ok/err so it is reported too (the first error wins).
         '  local function step(f) local g, e = pcall(f) if not g then ok, err = false, err or e end end\n' +
-        '  step(function() local fw = hl.get_window(sel); if fw and fw.floating then hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" })) end end)\n' +
+        '  step(function() local fw = hl.get_window(sel); if fw and fw.floating then run(hl.dsp.window.float({ window = sel, action = "toggle" })) end end)\n' +
         '  step(function() if fsSel and fsSel ~= sel then ' + fullscreenBodyLua('fsSel', 'fsMode') + ' end end)\n' +
         '  step(function() if ownMode ~= 0 then ' + fullscreenBodyLua('sel', 'ownMode') + ' end end)\n' +
         '  hl.config({ dwindle = { smart_split = smart, use_active_for_splits = useActive } })\n' +
@@ -419,7 +429,7 @@ function fullscreenBodyLua(sel, modeExpr) {
         'do local fw, fm = hl.get_window(' + sel + '), ' + modeExpr + '\n' +
         '  if fw and fm and fw.fullscreen ~= fm then\n' +
         '    local name = (fm == 1 or (fm == 0 and fw.fullscreen == 1)) and "maximized" or "fullscreen"\n' +
-        '    hl.dispatch(hl.dsp.window.fullscreen({ window = ' + sel + ', mode = name, action = "toggle" }))\n' +
+        '    run(hl.dsp.window.fullscreen({ window = ' + sel + ', mode = name, action = "toggle" }))\n' +
         '  end\n' +
         'end'
     )
@@ -453,6 +463,7 @@ function unfullscreenLua(addr) {
     return (
         'function()\n' +
         '  local prevW, cur = hl.get_active_window(), hl.get_cursor_pos()\n' +
+        '  ' + dispatchGuardLua() + '\n' +
         '  local ok, err = pcall(function()\n' +
         fullscreenBodyLua('"address:' + addr + '"', '0') + '\n' +
         '  end)\n' +
@@ -478,10 +489,11 @@ function floatingMoveLua(addr, targetWs, pos) {
         '  local w = hl.get_window(sel)\n' +
         '  if not w or not w.floating then return end\n' +
         '  local prevW, cur = hl.get_active_window(), hl.get_cursor_pos()\n' +
+        '  ' + dispatchGuardLua() + '\n' +
         '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
         '  local ok, err = pcall(function()\n' +
-        '    if not same then hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
-        '    hl.dispatch(hl.dsp.window.move({ x = "' + x + '", y = "' + y + '", window = sel }))\n' +
+        '    if not same then run(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
+        '    run(hl.dsp.window.move({ x = "' + x + '", y = "' + y + '", window = sel }))\n' +
         '  end)\n' +
         '  ' + reportLua('floating move') + '\n' +
         '  ' + restoreFocusLua('prevW', 'cur') + '\n' +
