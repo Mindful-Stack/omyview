@@ -788,4 +788,15 @@ TestCase {
         verify(tile().visible)
         wait(250)
     }
+    // Pointer handlers must go dead the instant `opened` drops, not once the fade finishes:
+    // a click on a box during the exit must not dispatch a jump.
+    function test_clicks_during_the_exit_fade_are_ignored() {
+        view.motion.scale = 1
+        view.close()
+        var b = view.boxes[1]
+        var p = view.testCanvas.mapToItem(tc, b.x + b.w / 2, b.y + b.h / 2)
+        mouseClick(tc, p.x, p.y, Qt.LeftButton)
+        wait(250)
+        compare(view.compositor.commands.length, 0, "no jump dispatched during the exit fade")
+    }
 }

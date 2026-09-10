@@ -453,6 +453,7 @@ Item {
         Hyprland.dispatch('hl.dsp.focus({ workspace = "' + id + '" })'); root.close()
     }
     function open() {
+        if (opened) return                          // already open: not a second entrance
         if (typeof Hyprland.refreshMonitors === "function") Hyprland.refreshMonitors()
         config.probeMotion()                       // async; result lands for this or the next open
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
@@ -555,7 +556,7 @@ Item {
         exclusionMode: ExclusionMode.Ignore
 
         Rectangle { id: scrimRect; anchors.fill: parent; color: root.scrim; visible: config.scrim; opacity: 0 }
-        MouseArea { anchors.fill: parent; onClicked: root.close() }
+        MouseArea { anchors.fill: parent; enabled: root.opened; onClicked: root.close() }
 
         // A 28% shadow reads on light themes but vanishes on dark ones (Tokyo Night sweep),
         // so the alpha follows the card's luminance.
@@ -662,6 +663,7 @@ Item {
                             }
                             MouseArea {   // click empty area of a workspace => jump
                                 anchors.fill: parent
+                                enabled: root.opened
                                 onClicked: root.jump(modelData.workspaceId)
                             }
                         }
@@ -725,6 +727,7 @@ Item {
                             MouseArea {
                                 id: dragArea
                                 anchors.fill: parent
+                                enabled: root.opened
                                 acceptedButtons: Qt.LeftButton | Qt.MiddleButton
                                 preventStealing: true
                                 drag.target: undefined
