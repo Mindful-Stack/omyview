@@ -924,4 +924,85 @@ TestCase {
         wait(250)
         fuzzyCompare(card.implicitHeight, Math.min(h1, card.maxCardH), 0.5)
     }
+
+    // ---- drop cues and appearance ----
+
+    // The workspace-level wash fades in over the target and fades out after release; it keeps
+    // its last geometry while fading out (no slide to 0,0).
+    function test_drop_wash_fades_in_and_out() {
+        view.motion.scale = 1
+        client.floating = true; view.rebuild()
+        var wash = view.testDropWash, b = view.boxes[1]
+        var t = tile(), p = t.mapToItem(tc, t.width/2, t.height/2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x+12, p.y+2, 20)
+        var goal = view.testCanvas.mapToItem(tc, b.x + b.w/2, b.y + b.h/2)
+        mouseMove(tc, goal.x, goal.y, 20)
+        wait(40)
+        verify(wash.opacity > 0 && wash.opacity < 1, "fading in, o=" + wash.opacity)
+        wait(150)
+        compare(wash.opacity, 1)
+        view.close()
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        wait(40)
+        verify(wash.opacity > 0 && wash.opacity < 1, "fading out, o=" + wash.opacity)
+        compare(wash.x, b.x, "keeps the last box while fading out")
+        wait(150)
+        compare(wash.opacity, 0); verify(!wash.visible)
+    }
+    function insertHalfOf(t) {
+        for (var i = 0; i < t.children.length; i++)
+            if (t.children[i].objectName === "insertHalf") return t.children[i]
+        fail("insertHalf not found")
+    }
+    // The tiled-insert half on the anchor tile fades in, and keeps its side while fading out.
+    function test_insertion_half_fades_and_keeps_its_side_while_fading_out() {
+        view.motion.scale = 1
+        addTarget(1)
+        var target = view.testModel.get(1), t = tile(), p = t.mapToItem(tc, t.width/2, t.height/2)
+        var children = view.testCanvas.children, anchor = null
+        for (var i = 0; i < children.length; i++)
+            if (children[i].model && children[i].model.address === "0x456") anchor = children[i]
+        var half = insertHalfOf(anchor)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x+12, p.y+2, 20)
+        var goal = view.testCanvas.mapToItem(tc, target.wx + target.ww*0.9, target.wy + target.wh/2)
+        mouseMove(tc, goal.x, goal.y, 20)
+        compare(view.dropTargetSide, "right")
+        wait(40)
+        verify(half.opacity > 0 && half.opacity < 0.45, "fading in, o=" + half.opacity)
+        wait(150)
+        fuzzyCompare(half.opacity, 0.45, 0.01)
+        view.close()
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        compare(view.dropTargetSide, "")
+        wait(40)
+        verify(half.opacity > 0, "still fading out")
+        compare(half.x, anchor.width / 2, "keeps the right half while fading out")
+        wait(150)
+        compare(half.opacity, 0); verify(!half.visible)
+    }
+    // A window opened while the picker is showing fades and scales its tile in.
+    function test_new_window_while_open_fades_and_scales_in() {
+        view.motion.scale = 1
+        var other = addTarget(2)
+        var children = view.testCanvas.children, nt = null
+        for (var i = 0; i < children.length; i++)
+            if (children[i].model && children[i].model.address === "0x456") nt = children[i]
+        verify(nt !== null)
+        verify(nt.opacity < 1, "appears from transparent, o=" + nt.opacity)
+        verify(nt.scale < 1, "appears from 0.9, s=" + nt.scale)
+        wait(300)
+        compare(nt.opacity, 1); compare(nt.appearScale, 1)
+    }
+    // Tiles created by the first layout at open do not animate in: the entrance covers that.
+    function test_tiles_present_at_open_do_not_animate_in() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.testModel.clear()
+        view.open()
+        var t = tile()
+        compare(t.opacity, 1); compare(t.appearScale, 1)
+        wait(350)
+    }
 }

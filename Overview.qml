@@ -797,6 +797,9 @@ Item {
                                 targetX = Qt.binding(function () { return model.wx })
                                 targetY = Qt.binding(function () { return model.wy })
                             }
+                            // New while showing → appear. Not at open (the entrance covers that),
+                            // not while closed (reconcile rebuilds can still add rows then).
+                            Component.onCompleted: if (root.opened && root.layoutMotion) appear()
                             Component.onDestruction: {
                                 if (root.dragTile === windowTile) root.endDrag()
                             }
@@ -929,9 +932,15 @@ Item {
                         readonly property var box:
                             (root.draggingAddress !== "" && root.dropTargetAddress === "")
                                 ? root.boxForWs(root.dropTargetWs) : null
-                        visible: box !== null
-                        x: box ? box.x : 0; y: box ? box.y : 0
-                        width: box ? box.w : 0; height: box ? box.h : 0
+                        // Geometry sticks to the last target so the fade-out stays in place.
+                        property var shownBox: null
+                        onBoxChanged: if (box) shownBox = box
+                        visible: opacity > 0
+                        opacity: box !== null ? 1 : 0
+                        Behavior on opacity { enabled: root.motion.enabled
+                            NumberAnimation { duration: root.motion.fast; easing.type: root.motion.hover } }
+                        x: shownBox ? shownBox.x : 0; y: shownBox ? shownBox.y : 0
+                        width: shownBox ? shownBox.w : 0; height: shownBox ? shownBox.h : 0
                         z: 60   // above resting/hovered tiles and the selection frame, below the ghost
                         radius: root.boxRadius
                         color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.22)

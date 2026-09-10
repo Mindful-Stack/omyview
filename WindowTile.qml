@@ -31,6 +31,10 @@ Item {
     property bool dropTarget: false
     // "left"|"right"|"top"|"bottom": which half a dragged tiled window would take here
     property string dropSide: ""
+    // The last non-empty side: the insertion half keeps it while fading out, so it never
+    // jumps to another edge on the way to transparent.
+    property string shownSide: ""
+    onDropSideChanged: if (dropSide.length) shownSide = dropSide
 
     readonly property bool wantCapture: handle !== null && capMode !== "icon"
     readonly property string iconUrl: Quickshell.iconPath(String(cls).toLowerCase(), true)
@@ -60,14 +64,36 @@ Item {
     }
 
     HoverHandler { id: hh; enabled: !tile.dragging }
-    scale: dragging ? 1 : (hh.hovered ? 1.03 : 1)
+    // Appear (window opened while the picker is showing): fade + scale 0.9 → 1 from the
+    // centre, on channels of their own so the hover/lift Behaviors are not re-smoothing an
+    // already smooth ramp (they are disabled while it runs).
+    property real appearScale: 1
+    property real appearOpacity: 1
+    function appear() {
+        if (!tile.motion.enabled) return
+        // Restart first: it flips appearAnim.running to true synchronously, which disables
+        // the hover/lift Behaviors below *before* the dip values are written, so that write
+        // lands directly instead of being smoothed by them (Behavior.enabled is checked at
+        // write time, not retroactively). The animation's own from-capture happens lazily on
+        // its first tick, after these values are in place, so it still ramps from 0.9/0.
+        appearAnim.restart()
+        appearScale = 0.9; appearOpacity = 0
+    }
+    ParallelAnimation {
+        id: appearAnim
+        NumberAnimation { target: tile; property: "appearScale"; to: 1
+                          duration: tile.motion.normal; easing.type: tile.motion.move }
+        NumberAnimation { target: tile; property: "appearOpacity"; to: 1
+                          duration: tile.motion.normal; easing.type: tile.motion.move }
+    }
+    scale: (dragging ? 1 : (hh.hovered ? 1.03 : 1)) * appearScale
     transformOrigin: Item.Center
     // Hover raises a tile within its own layer only; dragging is the single global exception.
     z: dragging ? 99999 : tileLayer * 10 + (hh.hovered ? 1 : 0)
-    opacity: dragging ? dragOpacity : 1
-    Behavior on scale { enabled: tile.motion.enabled
+    opacity: (dragging ? dragOpacity : 1) * appearOpacity
+    Behavior on scale { enabled: tile.motion.enabled && !appearAnim.running
         NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
-    Behavior on opacity { enabled: tile.motion.enabled
+    Behavior on opacity { enabled: tile.motion.enabled && !appearAnim.running
         NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
     transform: Scale {
         id: ghost
@@ -145,16 +171,20 @@ Item {
         }
     }
 
-    // insertion preview: the half of this tile the dragged tiled window will be split into
+    // insertion preview: the half of this tile the dragged tiled window will be split into.
+    // Fades in/out (motion.fast); geometry follows tile.shownSide, not dropSide.
     Rectangle {
-        visible: tile.dropSide.length > 0
+        objectName: "insertHalf"
+        visible: opacity > 0
+        opacity: tile.dropSide.length > 0 ? 0.45 : 0
+        Behavior on opacity { enabled: tile.motion.enabled
+            NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
         color: tile.borderColor
-        opacity: 0.45
         radius: 4
-        x: tile.dropSide === "right" ? parent.width / 2 : 0
-        y: tile.dropSide === "bottom" ? parent.height / 2 : 0
-        width: (tile.dropSide === "left" || tile.dropSide === "right") ? parent.width / 2 : parent.width
-        height: (tile.dropSide === "top" || tile.dropSide === "bottom") ? parent.height / 2 : parent.height
+        x: tile.shownSide === "right" ? parent.width / 2 : 0
+        y: tile.shownSide === "bottom" ? parent.height / 2 : 0
+        width: (tile.shownSide === "left" || tile.shownSide === "right") ? parent.width / 2 : parent.width
+        height: (tile.shownSide === "top" || tile.shownSide === "bottom") ? parent.height / 2 : parent.height
     }
 
     // fullscreen badge: a drawn four-corner glyph in the top-right corner while the window is
