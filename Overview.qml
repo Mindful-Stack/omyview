@@ -48,6 +48,27 @@ Item {
 
     OmyviewConfig { id: config }
 
+    // Motion vocabulary. Every duration and easing in the picker comes from here; tiles get it
+    // as a property (they never import the shell). `scale` is a test hook (0 = instant);
+    // config `motion: "off"` (or "auto" with Hyprland animations disabled) zeroes everything.
+    readonly property QtObject motion: QtObject {
+        property real scale: 1
+        readonly property bool enabled: config.motionEffective !== "off" && scale > 0
+        readonly property int fast:   enabled ? Math.round(90 * scale) : 0
+        readonly property int normal: enabled ? Math.round(160 * scale) : 0
+        readonly property int enter:  enabled ? Math.round(200 * scale) : 0
+        readonly property int exit:   enabled ? Math.round(120 * scale) : 0
+        readonly property int move: Easing.OutCubic       // layout movement
+        readonly property int hover: Easing.OutQuad       // hover, lift, release
+        readonly property int entrance: Easing.OutBack    // card entrance; overshoot tuned in Task 8
+        readonly property real overshoot: 1.2             // Qt default is 1.70158; "small"
+    }
+    // Layout Behaviors (frame, tiles, boxes, card size) run only when motion is on and the
+    // entrance is not playing: delegates are created at their final geometry, and the settle
+    // rebuilds during the first 200 ms must place, not glide. `enterAnim` arrives in Task 4;
+    // until then this is `motion.enabled` alone.
+    readonly property bool layoutMotion: motion.enabled
+
     // headerH is the chip band per monitor group; logic.js lays it out only when more than
     // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.
     readonly property var params: ({
@@ -495,7 +516,7 @@ Item {
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         exclusionMode: ExclusionMode.Ignore
 
-        Rectangle { anchors.fill: parent; color: root.scrim; visible: config.scrim }
+        Rectangle { id: scrimRect; anchors.fill: parent; color: root.scrim; visible: config.scrim }
         MouseArea { anchors.fill: parent; onClicked: root.close() }
 
         // A 28% shadow reads on light themes but vanishes on dark ones (Tokyo Night sweep),
@@ -644,6 +665,7 @@ Item {
                             dropTarget: root.dropTargetAddress === model.address
                             dropSide: root.dropTargetAddress === model.address ? root.dropTargetSide : ""
                             bg: root.background; fg: root.foreground
+                            motion: root.motion
                             floating: model.floating
                             fontFamily: root.fontFamily
                             titleSize: root.captionSize
@@ -756,9 +778,16 @@ Item {
                         border.width: 2
                         border.color: root.accent
                         opacity: root.draggingAddress !== "" ? 0.4 : 1
-                        Behavior on opacity { NumberAnimation { duration: 120 } }
-                        Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-                        Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                        Behavior on opacity { enabled: root.motion.enabled
+                            NumberAnimation { duration: root.motion.fast; easing.type: root.motion.hover } }
+                        Behavior on x      { enabled: root.layoutMotion
+                            NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                        Behavior on y      { enabled: root.layoutMotion
+                            NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                        Behavior on width  { enabled: root.layoutMotion
+                            NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                        Behavior on height { enabled: root.layoutMotion
+                            NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                     }
 
                     // drop wash: the workspace-level drop cue, drawn ABOVE the previews so a

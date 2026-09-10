@@ -24,6 +24,10 @@ Item {
     property bool fullscreenPending: false   // un-fullscreen dispatched; badge hidden until confirmed
     signal unfullscreenRequested()
 
+    // Motion vocabulary handed down by Overview: durations (ms) and easings. Tiles never own
+    // a duration of their own.
+    required property QtObject motion
+
     property bool dropTarget: false
     // "left"|"right"|"top"|"bottom": which half a dragged tiled window would take here
     property string dropSide: ""
@@ -57,14 +61,17 @@ Item {
     // Hover raises a tile within its own layer only; dragging is the single global exception.
     z: dragging ? 99999 : tileLayer * 10 + (hh.hovered ? 1 : 0)
     opacity: dragging ? dragOpacity : 1
-    Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
-    Behavior on opacity { NumberAnimation { duration: 100 } }
+    Behavior on scale { enabled: tile.motion.enabled
+        NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
+    Behavior on opacity { enabled: tile.motion.enabled
+        NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
     transform: Scale {
         id: ghost
         origin.x: tile.grabX; origin.y: tile.grabY
         xScale: tile.dragging ? tile.dragScale : 1
         yScale: xScale
-        Behavior on xScale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
+        Behavior on xScale { enabled: tile.motion.enabled
+            NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
     }
 
     // Floating windows sit above the tiled ones on the real desktop; a soft shadow says so
@@ -123,7 +130,8 @@ Item {
         color: Qt.rgba(0, 0, 0, 0.55)
         visible: hh.hovered && lbl.text.length > 0
         opacity: hh.hovered ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 100 } }
+        Behavior on opacity { enabled: tile.motion.enabled
+            NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
         Text {
             id: lbl; anchors.centerIn: parent; color: "#fff"
             font.family: tile.fontFamily; font.pixelSize: tile.titleSize

@@ -22,6 +22,11 @@ qml = qml.replace('id: root', '''id: root
     property alias testFlick: flick
     property alias testCanvas: canvas
     property alias testDropWash: dropWash
+    property alias testFrame: selectionFrame
+    property alias testPanel: panel
+    property alias testCard: card
+    property alias testScrim: scrimRect
+    property alias testConfig: config
     property QtObject compositor: QtObject {
         property var monitors: ({values: []})
         property var workspaces: ({values: []})
@@ -47,8 +52,11 @@ tile = tile[:start] + '    Rectangle { anchors.fill: parent; color: tile.bg }\n\
 (dest / 'WindowTile.qml').write_text(tile)
 (dest / 'logic.js').write_text((source / 'logic.js').read_text())
 # Shell-only helpers: the config loader needs Quickshell.Io, the shadow a GPU shader.
+# `motionEffective` is writable here so tests can flip the policy without a compositor.
 (dest / 'OmyviewConfig.qml').write_text(
-    'import QtQuick\nQtObject { property bool scrim: true; property bool hint: true }\n')
+    'import QtQuick\nQtObject { property bool scrim: true; property bool hint: true\n'
+    '           property string motion: "auto"; property string motionEffective: "full"\n'
+    '           function probeMotion() {} }\n')
 (dest / 'SoftShadow.qml').write_text(
     'import QtQuick\nItem { property Item target: parent; property real radius: 0; property real blur: 0\n'
     '       property var offset: null; property color color: "black" }\n')

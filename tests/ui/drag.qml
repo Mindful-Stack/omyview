@@ -13,6 +13,7 @@ TestCase {
     function init() {
         view = createTemporaryObject(overview, tc)
         verify(view !== null)
+        view.motion.scale = 0     // instant by default; timing tests set it to 1 themselves
         var mon = {name:"TEST", x:0, y:1440, width:1920, height:1080,
                    scale:1, lastIpcObject:{reserved:[0,26,0,0],transform:0}}
         client = {address:"0x123", at:[100,1540], size:[600,400], floating:false,
@@ -269,6 +270,7 @@ TestCase {
         compare(tile().x,before)
     }
     function test_ghost_shrinks_and_fades_while_dragging_and_restores() {
+        view.motion.scale = 1
         var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
         mousePress(tc,p.x,p.y,Qt.LeftButton)
         mouseMove(tc,p.x+12,p.y+2,20)
@@ -303,6 +305,7 @@ TestCase {
     // the Scale origin moves to the new grab point while the scale is still on its way back
     // to 1, which would displace the rendered tile by (grab − oldOrigin)·(1 − scale).
     function test_regrab_during_release_animation_keeps_grab_point_under_pointer() {
+        view.motion.scale = 1
         var t=tile(), g=t.mapToItem(tc,t.width-4,4)   // first grab: right edge
         mousePress(tc,g.x,g.y,Qt.LeftButton)
         mouseMove(tc,g.x+12,g.y+2,20)
@@ -707,5 +710,44 @@ TestCase {
         view.compositor.workspaces.values.splice(2, 1)   // workspace 3 destroyed
         view.rebuild()
         compare(view.selectedId, 2, "clamped to the last box")
+    }
+
+    // ---- motion vocabulary ----
+
+    // `off` zeroes every duration and disables every Behavior: selection snaps, and the
+    // window hides the instant it closes (no exit fade to wait for).
+    function test_motion_off_zeroes_every_duration_and_skips_animation() {
+        view.motion.scale = 1
+        view.testConfig.motionEffective = "off"
+        compare(view.motion.fast, 0); compare(view.motion.normal, 0)
+        compare(view.motion.enter, 0); compare(view.motion.exit, 0)
+        verify(!view.motion.enabled)
+        view.selectByNav("right")
+        compare(view.testFrame.x, view.boxes[1].x, "selection snaps")
+        view.close()
+        verify(!view.testPanel.visible, "hidden at once")
+    }
+    // With motion on, the keyboard selection frame glides: half-way through motion.normal
+    // it is strictly between the two boxes, and it lands exactly.
+    function test_selection_frame_glides_between_boxes() {
+        view.motion.scale = 1
+        var f = view.testFrame, b0 = view.boxes[0], b1 = view.boxes[1]
+        compare(f.x, b0.x)
+        view.selectByNav("right")
+        wait(80)
+        verify(f.x > b0.x + 1 && f.x < b1.x - 1, "half-way: between the boxes, x=" + f.x)
+        wait(200)
+        compare(f.x, b1.x)
+    }
+    // The frame dims while a drag is in progress, via motion.fast (instant here: scale 0).
+    function test_selection_frame_recedes_during_drag() {
+        var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        compare(view.testFrame.opacity, 1)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        mouseMove(tc,p.x+30,p.y+10,20)
+        fuzzyCompare(view.testFrame.opacity, 0.4, 0.01)
+        view.close()
+        mouseRelease(tc,p.x+30,p.y+10,Qt.LeftButton)
     }
 }
