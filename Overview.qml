@@ -25,12 +25,20 @@ Item {
     property color selBackground: Color.menu.selectedBackground
     property color selText: Color.menu.selectedText
     function tone(a) { return Qt.rgba(foreground.r, foreground.g, foreground.b, a) }
-    readonly property color wellColor: tone(Style.normalFillAlpha)      // workspace well
+    readonly property color wellColor: tone(Style.normalFillAlpha)      // occupied workspace well
+    readonly property color emptyWellColor: tone(Style.normalFillAlpha / 2)   // one step lower
+    // Typography follows the shell: the menu family and the theme's size tokens, so the picker
+    // tracks `omarchy display text size` like every other summoned surface.
+    readonly property string fontFamily: Style.font.menuFamily
+    readonly property int labelSize: Style.font.bodySmall
+    readonly property int captionSize: Style.font.caption
     // Well under a drag: the only workspace-level drop cue (tiled drops also preview the
     // insertion half on the anchor tile), so it must read even on the focused workspace.
     readonly property color dropWellColor: tone(Style.selectedFillAlpha)
     readonly property color hairline: tone(0.12)                          // between previews
     readonly property color accent: selText
+    readonly property bool darkTheme:
+        (0.299 * background.r + 0.587 * background.g + 0.114 * background.b) < 0.5
     // Badge chip: the card colour, nearly opaque, so the number reads over any preview.
     readonly property color badgeColor: Qt.rgba(background.r, background.g, background.b, 0.88)
     function wsLabel(id) { return id === 10 ? "0" : String(id) }   // matches the 1–0 keys
@@ -43,8 +51,8 @@ Item {
     // headerH is the chip band per monitor group; logic.js lays it out only when more than
     // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.
     readonly property var params: ({
-        maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 3, cellSpacing: 6,
-        rowSpacing: 10, headerH: 22, minTileW: 8, minTileH: 6
+        maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 3, cellSpacing: 4,
+        rowSpacing: 8, headerH: 22, minTileW: 8, minTileH: 6
     })
 
     property var groups: []
@@ -440,20 +448,24 @@ Item {
         Rectangle { anchors.fill: parent; color: root.scrim; visible: config.scrim }
         MouseArea { anchors.fill: parent; onClicked: root.close() }
 
-        CardShadow { target: card }
+        // A 28% shadow reads on light themes but vanishes on dark ones (Tokyo Night sweep),
+        // so the alpha follows the card's luminance.
+        SoftShadow { target: card; color: Qt.rgba(0, 0, 0, root.darkTheme ? 0.55 : 0.28) }
         Rectangle {
             id: card
             anchors.centerIn: parent
             radius: root.cardRadius
             color: root.background
-            readonly property int pad: 12
+            readonly property int pad: Math.round(Style.space(12))
+            // Space the key hints take under the grid, zero when they are switched off.
+            readonly property real hintSpace: config.hint ? hint.implicitHeight + 8 : 0
             // Cap the card to the screen so the Flickable viewport can be smaller than the
             // content (`availCanvasW` already keeps canvas width <= this, minus the degenerate
             // narrow-screen case, which is expected to 2-D scroll per the spec).
             readonly property real maxCardW: panel.width > 0 ? panel.width - 16 : 1616
             readonly property real maxCardH: panel.height > 0 ? panel.height - 64 : 900
             implicitWidth: Math.min(canvas.implicitWidth + pad * 2, maxCardW)
-            implicitHeight: Math.min(canvas.implicitHeight + pad * 2 + hint.height + 8, maxCardH)
+            implicitHeight: Math.min(canvas.implicitHeight + pad * 2 + hintSpace, maxCardH)
             MouseArea { anchors.fill: parent; onClicked: {} }
 
             Item {
@@ -479,7 +491,7 @@ Item {
                 id: flick
                 x: card.pad; y: card.pad
                 width: card.width - card.pad * 2
-                height: card.height - card.pad * 2 - hint.height - 8
+                height: card.height - card.pad * 2 - card.hintSpace
                 contentWidth: canvas.implicitWidth
                 contentHeight: canvas.implicitHeight
                 boundsBehavior: Flickable.StopAtBounds
@@ -522,7 +534,8 @@ Item {
                             radius: root.boxRadius
                             // a well sunk into the card; no outline
                             color: isDrop ? root.dropWellColor
-                                 : modelData.focused ? root.selBackground : root.wellColor
+                                 : modelData.focused ? root.selBackground
+                                 : modelData.occupied ? root.wellColor : root.emptyWellColor
 
                             // big low-contrast numeral, only where nothing would hide it
                             Text {
@@ -555,7 +568,8 @@ Item {
                             text: modelData.monitorName
                             color: modelData.focused ? root.accent : root.foreground
                             opacity: modelData.focused ? 1.0 : 0.55
-                            font.pixelSize: 11
+                            font.family: root.fontFamily
+                            font.pixelSize: root.labelSize
                             font.weight: Font.DemiBold
                             font.capitalization: Font.AllUppercase
                             font.letterSpacing: 1
@@ -577,6 +591,9 @@ Item {
                             dropTarget: root.dropTargetAddress === model.address
                             dropSide: root.dropTargetAddress === model.address ? root.dropTargetSide : ""
                             bg: root.background; fg: root.foreground
+                            floating: model.floating
+                            fontFamily: root.fontFamily
+                            titleSize: root.captionSize
                             id: windowTile
                             readonly property bool dragMoved: dragArea.moved
                             function restoreDrag() {
@@ -650,7 +667,7 @@ Item {
                             objectName: "wsBadge"
                             x: modelData.x + 6; y: modelData.y + 6
                             z: 40   // above resting/hovered tiles, below the selection frame
-                            height: 18
+                            height: badgeText.implicitHeight + 6
                             width: Math.max(height, badgeText.implicitWidth + 10)
                             radius: 5
                             color: modelData.focused ? root.accent : root.badgeColor
@@ -659,7 +676,8 @@ Item {
                                 anchors.centerIn: parent
                                 text: root.wsLabel(modelData.workspaceId)
                                 color: modelData.focused ? root.background : root.foreground
-                                font.pixelSize: 11
+                                font.family: root.fontFamily
+                                font.pixelSize: root.labelSize
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -709,11 +727,39 @@ Item {
                 }
             }
 
-            Text {
+            // key hints: each binding as a small key cap plus a label; off via config.hint
+            Row {
                 id: hint
+                visible: config.hint
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 8 }
-                text: "1–0 jump · arrows move · Enter select · drag a window · Esc close"
-                color: root.foreground; opacity: 0.4; font.pixelSize: 11
+                spacing: Math.round(Style.space(12))
+                Repeater {
+                    model: [ { k: "1–0", l: "jump" }, { k: "↑ ↓ ← →", l: "move" }, { k: "↵", l: "select" },
+                             { k: "drag", l: "move window" }, { k: "esc", l: "close" } ]
+                    Row {
+                        required property var modelData
+                        spacing: 5
+                        Rectangle {
+                            radius: 4
+                            color: root.wellColor
+                            height: capText.implicitHeight + 4
+                            width: capText.implicitWidth + 10
+                            Text {
+                                id: capText; anchors.centerIn: parent
+                                text: modelData.k
+                                color: root.foreground; opacity: 0.75
+                                font.family: root.fontFamily; font.pixelSize: root.captionSize
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.l
+                            color: root.foreground; opacity: 0.45
+                            font.family: root.fontFamily; font.pixelSize: root.captionSize
+                        }
+                    }
+                }
             }
         }
     }

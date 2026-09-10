@@ -9,6 +9,9 @@ qml = (source / 'Overview.qml').read_text()
 qml = re.sub(r'^import (Quickshell.*|qs\..*)\n', '', qml, flags=re.M)
 qml = re.sub(r'Color\.menu\.\w+', '"#888888"', qml)
 qml = re.sub(r'Style\.\w+FillAlpha', '0.1', qml)
+qml = re.sub(r'Style\.font\.\w*Family', '"sans-serif"', qml)
+qml = re.sub(r'Style\.font\.\w+', '11', qml)
+qml = re.sub(r'Style\.space\((\d+)\)', r'\1', qml)
 qml = qml.replace('Hyprland.', 'compositor.').replace('target: Hyprland', 'target: compositor')
 qml = qml.replace('Quickshell.screens', '[]').replace('ToplevelManager.toplevels', 'null')
 qml = qml.replace('PanelWindow {', 'Item {')
@@ -43,5 +46,8 @@ tile = tile[:start] + '    Rectangle { anchors.fill: parent; color: tile.bg }\n\
 (dest / 'WindowTile.qml').write_text(tile)
 (dest / 'logic.js').write_text((source / 'logic.js').read_text())
 # Shell-only helpers: the config loader needs Quickshell.Io, the shadow a GPU shader.
-(dest / 'OmyviewConfig.qml').write_text('import QtQuick\nQtObject { property bool scrim: true }\n')
-(dest / 'CardShadow.qml').write_text('import QtQuick\nItem { required property Item target }\n')
+(dest / 'OmyviewConfig.qml').write_text(
+    'import QtQuick\nQtObject { property bool scrim: true; property bool hint: true }\n')
+(dest / 'SoftShadow.qml').write_text(
+    'import QtQuick\nItem { property Item target: parent; property real radius: 0; property real blur: 0\n'
+    '       property var offset: null; property color color: "black" }\n')

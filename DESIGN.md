@@ -200,7 +200,7 @@ unchanged afterwards.
 ## Visual restyle (2026-09-10)
 
 Tone steps instead of outlines, end-4 style: a borderless card with its own radius and a soft
-`RectangularShadow` (`CardShadow.qml`), workspace wells filled with the menu text colour at the
+`RectangularShadow` (`SoftShadow.qml`), workspace wells filled with the menu text colour at the
 theme's `normalFillAlpha`, a large low-contrast numeral behind the windows, and one 2px accent
 selection frame that follows keyboard selection only (it recedes during a drag and never moves
 to the drop target). The drop cue is drawn above the previews: the tiled-insert half on the
@@ -216,3 +216,11 @@ Each box carries a small number chip in its top-left corner, drawn above the pre
 colour at 88 %, accent-filled for the focused workspace), so the 1–0 keys always have a visible
 anchor. The big low-contrast numeral is kept for empty workspaces only.
 Design: `docs/specs/2026-09-10-ws-badge-design.md`.
+
+## Theme polish (2026-09-10)
+
+Typography comes from the shell (`Style.font.menuFamily`, `bodySmall`, `caption`) and the card
+padding from `Style.space`, so the picker follows `omarchy display text size`. Empty wells sit one
+tone step below occupied ones; floating windows cast a small `SoftShadow`; the key hints are key
+caps with labels and can be switched off (`hint` in `~/.config/omarchy/omyview.json`). Cell gaps
+tightened to 4/8. Design: `docs/specs/2026-09-10-theme-polish-design.md`.

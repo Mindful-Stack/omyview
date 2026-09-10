@@ -6,7 +6,8 @@ import Quickshell.Io
 // here; a missing file, a parse error or an unknown key never changes behaviour.
 QtObject {
     id: cfg
-    property bool scrim: true
+    property bool scrim: true   // dim the desktop behind the picker
+    property bool hint: true    // key hints under the workspace grid
 
     readonly property string path: Quickshell.env("HOME") + "/.config/omarchy/omyview.json"
 
@@ -14,6 +15,7 @@ QtObject {
         var o = {}
         try { o = JSON.parse(String(raw || "")) || {} } catch (e) { o = {} }
         cfg.scrim = (typeof o.scrim === "boolean") ? o.scrim : true
+        cfg.hint = (typeof o.hint === "boolean") ? o.hint : true
     }
 
     property FileView file: FileView {

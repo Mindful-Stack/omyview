@@ -14,6 +14,9 @@ Item {
     property color fg: "#ddd"
     property string title: ""
     property bool dragging: false        // set by Overview during a drag to suppress hover-zoom
+    property bool floating: false        // floating windows get a soft shadow, like on the desktop
+    property string fontFamily: ""
+    property int titleSize: 10
 
     property bool dropTarget: false
     // "left"|"right"|"top"|"bottom": which half a dragged tiled window would take here
@@ -55,6 +58,18 @@ Item {
         xScale: tile.dragging ? tile.dragScale : 1
         yScale: xScale
         Behavior on xScale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
+    }
+
+    // Floating windows sit above the tiled ones on the real desktop; a soft shadow says so
+    // here too. Hidden in transit (the ghost is already lifted by scale and opacity).
+    SoftShadow {
+        objectName: "floatShadow"
+        target: tile
+        visible: tile.floating && !tile.dragging
+        radius: 5
+        blur: 12
+        offset: Qt.vector2d(0, 3)
+        color: Qt.rgba(0, 0, 0, 0.35)
     }
 
     ClippingRectangle {
@@ -103,7 +118,8 @@ Item {
         opacity: hh.hovered ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 100 } }
         Text {
-            id: lbl; anchors.centerIn: parent; color: "#fff"; font.pixelSize: 10
+            id: lbl; anchors.centerIn: parent; color: "#fff"
+            font.family: tile.fontFamily; font.pixelSize: tile.titleSize
             elide: Text.ElideRight; width: parent.width - 8
             text: tile.title.length ? tile.title : tile.cls
         }
