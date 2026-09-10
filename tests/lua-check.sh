@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Real-parse check: renders the atomic Lua chunks logic.js builds (via a tiny throwaway QML
-# script that imports logic.js the same way the plugin does) and feeds each one to a real Lua
-# interpreter's `load()`. Substring assertions in tst_layout.qml can't catch a chunk that is
-# simply not valid Lua -- and an unparseable chunk is dropped silently by the compositor, not
-# reported anywhere -- so this closes that gap.
+# Real-Lua check of the atomic chunks logic.js builds: render them through a throwaway QML
+# script (importing logic.js the way the plugin does), parse each with a real interpreter's
+# `load()` -- an unparseable chunk is dropped silently by the compositor, not reported
+# anywhere -- then run the behaviour suite (tests/lua/tst_chunks.lua) against a mock `hl`.
 set -euo pipefail
 src=$(cd "$(dirname "$0")/.." && pwd)
 
 QML_BIN=""
-for c in qml6 qml; do
+for c in qml6 qml /usr/lib/qt6/bin/qml; do   # Ubuntu's qml-qt6 installs off PATH
   if command -v "$c" >/dev/null 2>&1; then QML_BIN="$c"; break; fi
 done
 LUA_BIN=""
@@ -17,8 +16,9 @@ for c in lua5.4 lua luajit; do
 done
 
 if [ -z "$QML_BIN" ] || [ -z "$LUA_BIN" ]; then
-  echo "SKIP: lua-check needs a Qt6 qml runtime (qml6/qml) and a Lua interpreter (lua5.4/lua/luajit) -- missing one of them"
-  exit 0
+  msg="lua-check needs a Qt6 qml runtime (qml6, qml, /usr/lib/qt6/bin/qml) and a Lua interpreter (lua5.4/lua/luajit) -- missing one of them"
+  if [ -n "${CI:-}" ]; then echo "FAIL: $msg (CI must install them)" >&2; exit 1; fi
+  echo "SKIP: $msg"; exit 0
 fi
 
 fixture=$(mktemp -d)
@@ -27,34 +27,35 @@ cat > "$fixture/dump.qml" <<EOF
 import QtQuick
 import "$src/logic.js" as Logic
 QtObject { Component.onCompleted: {
-    console.log("CHUNK " + Logic.unfullscreenLua("0xabc"))
-    console.log("CHUNK " + Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 }))
-    console.log("CHUNK " + Logic.tiledInsertLua("0xabc", 2, { anchor: "", side: "", x: 10, y: 20 }))
+    console.log("CHUNK UNFULLSCREEN " + Logic.unfullscreenLua("0xabc"))
+    console.log("CHUNK TILED_INSERT " + Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 }))
+    console.log("CHUNK TILED_INSERT_NO_ANCHOR " + Logic.tiledInsertLua("0xabc", 3, { anchor: "", side: "", x: 10, y: 20 }))
+    console.log("CHUNK FLOATING_MOVE " + Logic.floatingMoveLua("0xabc", 3, { x: 200, y: 1600 }))
     Qt.quit()
 } }
 EOF
 
 # console.log routes through qDebug, which on a systemd session defaults to the journal rather
-# than this process's stderr -- QT_FORCE_STDERR_LOGGING pins it back to stderr so the pipe below
-# actually sees the lines. qml6's own "qml: " prefix (and any other noise before it) is stripped
-# by only keeping what follows "CHUNK ".
-chunks=$(QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 "$QML_BIN" "$fixture/dump.qml" 2>&1 | sed -n 's/^.*CHUNK //p')
+# than this process's stderr -- QT_FORCE_STDERR_LOGGING pins it back to stderr. Only what
+# follows "CHUNK " is kept (qml's own "qml: " prefix and other noise are dropped). Chunks are
+# single-line by construction, so one line per chunk is sound.
+QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 "$QML_BIN" "$fixture/dump.qml" 2>&1 \
+  | sed -n 's/^.*CHUNK //p' > "$fixture/chunks.txt"
 
-count=$(printf '%s\n' "$chunks" | grep -c . || true)
-if [ "$count" -lt 3 ]; then
-  echo "FAIL: expected at least 3 generated Lua chunks, got $count (silent/empty output must not pass)" >&2
+count=$(grep -c . "$fixture/chunks.txt" || true)
+if [ "$count" -lt 4 ]; then
+  echo "FAIL: expected 4 generated Lua chunks, got $count (silent/empty output must not pass)" >&2
+  cat "$fixture/chunks.txt" >&2
   exit 1
 fi
 
-if ! printf '%s\n' "$chunks" | "$LUA_BIN" -e '
+# stdin, not an argument: `lua -e stat file` would run `file` as a script.
+"$LUA_BIN" -e '
 for line in io.lines() do
-  local f, err = load("return " .. line)
-  if not f then
-    io.stderr:write("LUA PARSE FAIL: " .. err .. "\n" .. line .. "\n")
-    os.exit(1)
-  end
-end'; then
-  exit 1
-fi
-
+  local name, body = line:match("^(%S+) (.+)$")
+  local f, err = load("return " .. body, name)
+  if not f then io.stderr:write("LUA PARSE FAIL (" .. name .. "): " .. err .. "\n" .. body .. "\n"); os.exit(1) end
+end' < "$fixture/chunks.txt"
 echo "PASS: $count generated Lua chunks parse"
+
+"$LUA_BIN" "$src/tests/lua/tst_chunks.lua" "$fixture/chunks.txt"
