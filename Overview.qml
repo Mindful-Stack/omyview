@@ -138,9 +138,6 @@ Item {
     // addr -> { mode, deadline }: an un-fullscreen was dispatched; the badge stays hidden until
     // fresh data reports that mode, or the deadline passes (rejected: badge returns).
     property var pendingFullscreen: ({})
-    // The first rebuild after open re-sets every row: a glide still running at close can have
-    // overwritten a later reconcile write, and rowDiffers would then never correct it.
-    property bool _reassertLayout: false
     property var dragTile: null
     property int dropTargetWs: -1
     property string dropTargetAddress: ""
@@ -376,7 +373,7 @@ Item {
                         title: titleFor(tu.address), cls: clsFor(tu.address),
                         wsid: tu.workspaceId, floating: floatingFor(tu.address),
                         layer: tu.layer, fullscreen: tu.fullscreen }
-            if (root._reassertLayout || rowDiffers(tilesModel.get(iu), row)) tilesModel.set(iu, row)
+            if (rowDiffers(tilesModel.get(iu), row)) tilesModel.set(iu, row)
         }
         for (var rmi = 0; rmi < d.removes.length; rmi++) {
             if (root.draggingAddress === d.removes[rmi] || pendingMoves[d.removes[rmi]]) continue // cancel handled elsewhere
@@ -408,7 +405,7 @@ Item {
             seen[b.workspaceId] = true
             var idx = boxIndex(b.workspaceId)
             if (idx < 0) boxesModel.append(row)
-            else if (root._reassertLayout || rowDiffers(boxesModel.get(idx), row)) boxesModel.set(idx, row)
+            else if (rowDiffers(boxesModel.get(idx), row)) boxesModel.set(idx, row)
         }
         for (var r = boxesModel.count - 1; r >= 0; r--)
             if (!seen[boxesModel.get(r).workspaceId]) boxesModel.remove(r)
@@ -494,9 +491,7 @@ Item {
         config.probeMotion()                       // async; result lands for this or the next open
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
         _showVisuals(true)                         // before the first rebuild: layout motion is gated on it
-        _reassertLayout = true
         rebuild()          // instant paint from current data
-        _reassertLayout = false
         ensureSelectedVisible()
         scheduleRebuild()  // then settle as fresh toplevel geometry lands
         Qt.callLater(function () { keyCatcher.forceActiveFocus() })
