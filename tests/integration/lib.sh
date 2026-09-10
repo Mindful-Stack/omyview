@@ -47,10 +47,25 @@ start_quickshell() {
     # Theme-only adapters: actual Quickshell, Wayland and Hyprland modules remain intact.
     printf 'module qs.Commons\nsingleton Color 1.0 Color.qml\nsingleton Style 1.0 Style.qml\n' > "$tmp/Commons/qmldir"
     printf 'pragma Singleton\nimport QtQuick\nQtObject { readonly property var menu: ({background:"#222",text:"#fff",border:"#888",scrim:"#000",selectedBackground:"#444",selectedText:"#fff"}) }\n' > "$tmp/Commons/Color.qml"
-    printf 'pragma Singleton\nimport QtQuick\nQtObject { readonly property int cornerRadius: 8 }\n' > "$tmp/Commons/Style.qml"
+    # Mirrors the shell's Commons/Style.qml members the plugin reads (Style.font.*, Style.space).
+    cat > "$tmp/Commons/Style.qml" <<'QML'
+pragma Singleton
+import QtQuick
+QtObject {
+    readonly property int cornerRadius: 8
+    readonly property real normalFillAlpha: 0.08
+    readonly property real selectedFillAlpha: 0.2
+    readonly property QtObject font: QtObject {
+        readonly property string menuFamily: "monospace"
+        readonly property int bodySmall: 11
+        readonly property int caption: 10
+    }
+    function space(px) { return px }
+}
+QML
     printf 'module qs.Ui\nUnused 1.0 Unused.qml\n' > "$tmp/Ui/qmldir"
     printf 'import QtQuick\nItem {}\n' > "$tmp/Ui/Unused.qml"
-    cp "$src/Overview.qml" "$src/WindowTile.qml" "$src/logic.js" "$tmp/"
+    cp "$src"/*.qml "$src/logic.js" "$tmp/"   # every component the plugin ships (SoftShadow, OmyviewConfig, ...)
     cp "$src/tests/integration/drag.qml" "$tmp/shell.qml"
     HYPRLAND_INSTANCE_SIGNATURE="$nested" WAYLAND_DISPLAY="$socket" quickshell -p "$tmp/shell.qml" > "$tmp/qs.log" 2>&1 & qs_pid=$!
     for _ in $(seq 1 40); do
