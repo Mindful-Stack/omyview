@@ -668,4 +668,32 @@ TestCase {
         wait(400)
         compare(boxesSpy.count, settled, "timer stops after five quiet ticks")
     }
+    function threeWorkspaces() {
+        var mon = view.compositor.monitors.values[0]
+        view.compositor.workspaces = {values:[
+            {id:1,monitor:mon,toplevels:{values:[{lastIpcObject:client}]}},
+            {id:2,monitor:mon,toplevels:{values:[]}},
+            {id:3,monitor:mon,toplevels:{values:[]}}
+        ]}
+        view.rebuild()
+    }
+    // Selection is a workspace, not a position: when a preceding workspace disappears the
+    // selected id must survive the rebuild.
+    function test_selection_keeps_workspace_when_earlier_one_vanishes() {
+        threeWorkspaces()
+        view.selectByNav("right")
+        compare(view.selectedId, 2)
+        view.compositor.workspaces.values.splice(0, 1)   // workspace 1 destroyed
+        view.rebuild()
+        compare(view.selectedId, 2, "still workspace 2, not whatever now sits at index 1")
+    }
+    // When the selected workspace itself disappears, fall back to the nearest position.
+    function test_selection_falls_back_when_selected_workspace_vanishes() {
+        threeWorkspaces()
+        view.selectByNav("right"); view.selectByNav("right")
+        compare(view.selectedId, 3)
+        view.compositor.workspaces.values.splice(2, 1)   // workspace 3 destroyed
+        view.rebuild()
+        compare(view.selectedId, 2, "clamped to the last box")
+    }
 }

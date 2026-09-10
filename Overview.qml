@@ -372,6 +372,7 @@ Item {
     }
 
     function rebuild() {
+        var keepId = root.selectedId   // the workspace the user has selected, before layout
         buildHandles()
         var input = buildInput()
         var cmap = {}, tmap = {}, fmap = {}, wmap = {}
@@ -398,14 +399,16 @@ Item {
         canvas.implicitWidth = res.canvasSize.w
         canvas.implicitHeight = res.canvasSize.h
         applyTiles(res.tiles)
-        if (root.selectedIndex < 0) {
-            var fi = -1
-            for (var b = 0; b < res.boxes.length; b++) if (res.boxes[b].focused) { fi = b; break }
-            root.selectedIndex = fi >= 0 ? fi : (res.boxes.length ? 0 : -1)
-        } else {
-            root.selectedIndex = res.boxes.length
-                ? Math.min(Math.max(root.selectedIndex, 0), res.boxes.length - 1) : -1
+        // Selection follows the workspace, not its position: workspaces come and go while the
+        // overview is open (a drag can empty and destroy one), shifting every later box.
+        var idx = keepId >= 0 ? Logic.indexOfWorkspace(res.boxes, keepId) : -1
+        if (idx < 0 && root.selectedIndex >= 0)   // selected workspace vanished: nearest position
+            idx = res.boxes.length ? Math.min(root.selectedIndex, res.boxes.length - 1) : -1
+        if (idx < 0 && res.boxes.length) {        // nothing selected yet: the focused workspace
+            for (var b = 0; b < res.boxes.length; b++) if (res.boxes[b].focused) { idx = b; break }
+            if (idx < 0) idx = 0
         }
+        root.selectedIndex = idx
     }
 
     function selectByNav(dir) {

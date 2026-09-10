@@ -507,6 +507,13 @@ TestCase {
         verify(fb > guard && fb < lua.indexOf('smart_split = true'), "fallback is a plain silent move, before the dwindle path")
         verify(lua.indexOf('return', fb) > fb && lua.indexOf('return', fb) < lua.indexOf('smart_split = true'), "fallback returns before the dwindle path")
     }
+    function test_index_of_workspace() {
+        var boxes = [{ workspaceId: 2 }, { workspaceId: 5 }, { workspaceId: 7 }]
+        compare(Logic.indexOfWorkspace(boxes, 5), 1)
+        compare(Logic.indexOfWorkspace(boxes, 2), 0)
+        compare(Logic.indexOfWorkspace(boxes, 9), -1)
+        compare(Logic.indexOfWorkspace([], 2), -1)
+    }
     function test_every_chunk_reports_swallowed_errors() {
         verify(Logic.unfullscreenLua("0xabc").indexOf('un-fullscreen failed') >= 0)
         verify(Logic.floatingMoveLua("0xabc", 2, { x: 1, y: 2 }).indexOf('floating move failed') >= 0)

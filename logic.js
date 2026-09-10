@@ -516,6 +516,12 @@ function hitWorkspace(boxes, px, py) {
     return null
 }
 
+// Index of the box showing workspace `id`, or -1.
+function indexOfWorkspace(boxes, id) {
+    for (var i = 0; i < boxes.length; i++) if (boxes[i].workspaceId === id) return i
+    return -1
+}
+
 function diffByAddress(prevAddresses, nextTiles) {
     var prev = {}
     for (var i = 0; i < prevAddresses.length; i++) prev[prevAddresses[i]] = true
