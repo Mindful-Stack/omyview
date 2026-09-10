@@ -41,6 +41,9 @@ removed `walker`.
 - A **recent Hyprland** (developed against 0.56.2). Omyview uses Hyprland's typed `hl.dsp.*`
   dispatchers for focus/move/close and requires **Lua configuration mode** (`hyprland.lua`),
   as used by Omarchy Quattro. A legacy `.conf` session rejects those dispatchers.
+- The **dwindle** layout for drag-to-rearrange. On any other layout a tiled drop still moves
+  the window to the target workspace, but it is not re-tiled at the drop point (the
+  cursor-based insert is a dwindle behaviour). Floating drops work on every layout.
 
 ### 1. Add the plugin
 
