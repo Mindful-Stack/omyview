@@ -171,6 +171,26 @@ the top of `Overview.qml` (cell size caps, `cellInset`, `cellSpacing`, `rowSpaci
 `minTileW`/`minTileH` clamps). After editing QML, run `omarchy restart shell` (see the note in
 Contributing about why a plain rescan isn't enough).
 
+### Let the picker animate itself (Hyprland side)
+
+Omyview animates its own open and close (a short fade and scale). Hyprland also animates
+layer surfaces by default, so without a rule the two stack: a compositor fade on top of the
+picker's own. Omarchy gives its shell overlays a `no_anim` rule; give `omyview` the same.
+Lua config (`~/.config/hypr/looknfeel.lua` or any file loaded by `hyprland.lua`):
+
+```lua
+hl.layer_rule({ match = { namespace = "omyview" }, no_anim = true, animation = "none" })
+```
+
+Classic config:
+
+```ini
+layerrule = noanim, omyview
+```
+
+With `"motion": "off"` (or `"auto"` while Hyprland's `animations:enabled` is off) the picker
+does not animate at all, and you may prefer to leave the compositor's layer animation on.
+
 ---
 
 ## Contributing

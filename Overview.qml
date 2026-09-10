@@ -67,7 +67,7 @@ Item {
     // entrance is not playing: delegates are created at their final geometry, and the settle
     // rebuilds during the first 200 ms must place, not glide. `enterAnim` arrives in Task 4;
     // until then this is `motion.enabled` alone.
-    readonly property bool layoutMotion: motion.enabled
+    readonly property bool layoutMotion: motion.enabled && !enterAnim.running
 
     // headerH is the chip band per monitor group; logic.js lays it out only when more than
     // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.
@@ -454,20 +454,56 @@ Item {
     }
     function open() {
         if (typeof Hyprland.refreshMonitors === "function") Hyprland.refreshMonitors()
+        config.probeMotion()                       // async; result lands for this or the next open
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
+        _showVisuals(true)                         // before the first rebuild: layout motion is gated on it
         rebuild()          // instant paint from current data
         ensureSelectedVisible()
         scheduleRebuild()  // then settle as fresh toplevel geometry lands
         Qt.callLater(function () { keyCatcher.forceActiveFocus() })
     }
     function close() {
+        if (!opened) return                        // a click on the scrim mid-fade is not a second close
         endDrag()
         // Every dispatched operation is atomic in the compositor; the reconcile timer only
         // clears optimistic state.
         settleTimer.stop()
-        opened = false
+        opened = false                             // releases keyboard focus at once (see panel)
+        _showVisuals(false)                        // the window unmaps when card.opacity reaches 0
     }
     function toggle() { if (opened) close(); else open() }
+    // Card + scrim in or out. With motion off the values are set directly: nothing animates,
+    // and `panel.visible` follows synchronously.
+    function _showVisuals(on) {
+        if (root.motion.enabled) {
+            if (on) { exitAnim.stop(); enterAnim.restart() }
+            else    { enterAnim.stop(); exitAnim.restart() }
+            return
+        }
+        enterAnim.stop(); exitAnim.stop()
+        card.scale = 1
+        card.opacity = on ? 1 : 0
+        scrimRect.opacity = on ? 1 : 0
+    }
+    ParallelAnimation {
+        id: enterAnim
+        NumberAnimation { target: scrimRect; property: "opacity"; to: 1
+                          duration: root.motion.normal; easing.type: root.motion.move }
+        NumberAnimation { target: card; property: "opacity"; to: 1
+                          duration: root.motion.enter; easing.type: root.motion.move }
+        NumberAnimation { target: card; property: "scale"; from: 0.96; to: 1
+                          duration: root.motion.enter; easing.type: root.motion.entrance
+                          easing.overshoot: root.motion.overshoot }
+    }
+    ParallelAnimation {
+        id: exitAnim
+        NumberAnimation { target: scrimRect; property: "opacity"; to: 0
+                          duration: root.motion.exit; easing.type: root.motion.move }
+        NumberAnimation { target: card; property: "opacity"; to: 0
+                          duration: root.motion.exit; easing.type: root.motion.move }
+        NumberAnimation { target: card; property: "scale"; to: 0.98
+                          duration: root.motion.exit; easing.type: root.motion.move }
+    }
 
     // Ask Hyprland for fresh client data, then rebuild every 60ms until five quiet ticks have
     // passed, so a window opened while the overview is visible appears once its async geometry
@@ -507,26 +543,30 @@ Item {
 
     PanelWindow {
         id: panel
-        visible: root.opened
+        // Stays mapped through the exit fade (the pattern Omarchy's PopupCard uses); keyboard
+        // focus is released the moment `opened` drops, not when the fade ends.
+        visible: root.opened || card.opacity > 0
         screen: root.targetScreen
         anchors { top: true; bottom: true; left: true; right: true }
         color: "transparent"
         WlrLayershell.namespace: "omyview"
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+        WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         exclusionMode: ExclusionMode.Ignore
 
-        Rectangle { id: scrimRect; anchors.fill: parent; color: root.scrim; visible: config.scrim }
+        Rectangle { id: scrimRect; anchors.fill: parent; color: root.scrim; visible: config.scrim; opacity: 0 }
         MouseArea { anchors.fill: parent; onClicked: root.close() }
 
         // A 28% shadow reads on light themes but vanishes on dark ones (Tokyo Night sweep),
         // so the alpha follows the card's luminance.
-        SoftShadow { target: card; color: Qt.rgba(0, 0, 0, root.darkTheme ? 0.55 : 0.28) }
+        SoftShadow { target: card; scale: card.scale; opacity: card.opacity
+                     color: Qt.rgba(0, 0, 0, root.darkTheme ? 0.55 : 0.28) }
         Rectangle {
             id: card
             anchors.centerIn: parent
             radius: root.cardRadius
             color: root.background
+            opacity: 0        // the entrance brings it in; panel.visible follows this
             readonly property int pad: Math.round(Style.space(12))
             // Space the key hints take under the grid, zero when they are switched off.
             readonly property real hintSpace: config.hint ? hint.implicitHeight + 8 : 0
@@ -595,9 +635,10 @@ Item {
 
                     // boxes layer
                     Repeater {
-                        model: root.opened ? root.boxes : []
+                        model: panel.visible ? root.boxes : []
                         Rectangle {
                             required property var modelData
+                            objectName: "wsBox"
                             readonly property bool isSel: modelData.workspaceId === root.selectedId
                             readonly property bool isDrop: root.draggingAddress !== "" &&
                                                            modelData.workspaceId === root.dropTargetWs
@@ -630,7 +671,7 @@ Item {
                     // the focused monitor's label is accented. Shown only when the layout has
                     // more than one group (then each group carries a non-zero header band).
                     Repeater {
-                        model: root.opened && root.groups.length > 1 ? root.groups : []
+                        model: panel.visible && root.groups.length > 1 ? root.groups : []
                         Text {
                             required property var modelData
                             x: modelData.x + 4; y: modelData.y
@@ -739,7 +780,7 @@ Item {
                     // what the previews contain. One chip per box, top-left corner. Focused
                     // workspace = accent chip. No mouse handling, so clicks fall through.
                     Repeater {
-                        model: root.opened ? root.boxes : []
+                        model: panel.visible ? root.boxes : []
                         Rectangle {
                             required property var modelData
                             objectName: "wsBadge"

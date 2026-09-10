@@ -750,4 +750,42 @@ TestCase {
         view.close()
         mouseRelease(tc,p.x+30,p.y+10,Qt.LeftButton)
     }
+
+    // ---- open / close ----
+
+    // Closing starts an exit fade: the surface stays mapped (opened=false, still visible)
+    // until the card's opacity reaches 0, then hides.
+    function test_window_stays_visible_through_the_exit_fade() {
+        view.motion.scale = 1
+        view.close()
+        verify(!view.opened)
+        verify(view.testPanel.visible, "still mapped while the card fades")
+        verify(view.testCard.opacity > 0 && view.testCard.opacity <= 1)
+        wait(250)
+        verify(!view.testPanel.visible, "hidden once the fade ends")
+        compare(view.testCard.opacity, 0)
+        compare(view.testScrim.opacity, 0)
+    }
+    // Opening animates in: the card is not yet opaque right after open() and is after the
+    // entrance; the scrim follows.
+    function test_open_fades_and_scales_the_card_in() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.open()
+        verify(view.testCard.opacity < 1, "entrance in flight")
+        verify(view.testCard.scale < 1, "scales up from 0.96")
+        wait(350)
+        compare(view.testCard.opacity, 1); compare(view.testCard.scale, 1)
+        compare(view.testScrim.opacity, 1)
+    }
+    // The card's content must not vanish at the start of the fade: boxes, badges and tiles
+    // are still there while opened is already false.
+    function test_card_content_stays_through_the_exit_fade() {
+        view.motion.scale = 1
+        view.close()
+        compare(canvasItems("wsBadge").length, view.boxes.length, "badges still present")
+        compare(canvasItems("wsBox").length, view.boxes.length, "boxes still present")
+        verify(tile().visible)
+        wait(250)
+    }
 }
