@@ -294,6 +294,21 @@ function tiledDropPlan(candidates, sameWorkspace, own, cx, cy) {
     return { anchor: best.address, side: dropSide(best, cx, cy) }
 }
 
+// Lua statements that report a failure captured as `ok, err` (from pcall) for the operation
+// `what`: to the compositor log (Hyprland rebinds `print` to its log with a [Lua] prefix) and
+// as an on-screen notification (guarded: hl.notification is missing on older Hyprland). Errors
+// inside our own pcall are otherwise invisible — the compositor only logs uncaught ones.
+// Returns newline-separated statements; the outermost chunk builder must flatten to one line.
+function reportLua(what) {
+    return (
+        'if not ok then\n' +
+        '  local msg = "omyview: ' + what + ' failed: " .. tostring(err)\n' +
+        '  print(msg)\n' +
+        '  pcall(function() hl.notification.create({ text = msg, duration = 4000, icon = "error" }) end)\n' +
+        'end'
+    )
+}
+
 // One atomic Lua chunk (Hyprland Lua-config mode evaluates `dispatch` payloads as
 // `hl.dispatch(<payload>)`, and accepts a function) that replays a native tiled drop:
 //   strip the target workspace's fullscreen window (and the dragged window's own fullscreen,
@@ -316,21 +331,6 @@ function tiledDropPlan(candidates, sameWorkspace, own, cx, cy) {
 // restore are separate guarded steps that re-read state, so a throw never leaves the window
 // floating, and the error is reported (log + notification). Layouts other than dwindle get a
 // plain silent move: the cursor-based insert is dwindle behaviour.
-// Lua statements that report a failure captured as `ok, err` (from pcall) for the operation
-// `what`: to the compositor log (Hyprland rebinds `print` to its log with a [Lua] prefix) and
-// as an on-screen notification (guarded: hl.notification is missing on older Hyprland). Errors
-// inside our own pcall are otherwise invisible — the compositor only logs uncaught ones.
-// Returns newline-separated statements; the outermost chunk builder must flatten to one line.
-function reportLua(what) {
-    return (
-        'if not ok then\n' +
-        '  local msg = "omyview: ' + what + ' failed: " .. tostring(err)\n' +
-        '  print(msg)\n' +
-        '  pcall(function() hl.notification.create({ text = msg, duration = 4000, icon = "error" }) end)\n' +
-        'end'
-    )
-}
-
 function tiledInsertLua(addr, targetWs, placement) {
     var ws = String(parseInt(targetWs, 10))
     var gx = Math.round(placement.x), gy = Math.round(placement.y)
@@ -348,7 +348,10 @@ function tiledInsertLua(addr, targetWs, placement) {
         '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
         '  local layout = hl.get_config("general.layout")\n' +
         '  if layout ~= nil and layout ~= "dwindle" then\n' +
-        '    if not same then hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
+        '    local ok, err = pcall(function()\n' +
+        '      if not same then hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
+        '    end)\n' +
+        '    ' + reportLua('tiled insert') + '\n' +
         '    ' + restoreFocusLua('prevW', 'cur') + '\n' +
         '    return\n' +
         '  end\n' +
@@ -389,10 +392,12 @@ function tiledInsertLua(addr, targetWs, placement) {
         // Cleanup. On success the un-float IS the re-tile (at the cursor). Each step re-reads
         // state and is guarded on its own, so a failure above — or in an earlier cleanup step —
         // never leaves the window floating, the workspace un-fullscreened, or the config changed.
-        // The window was tiled on entry, so any floating state here is ours to undo.
-        '  pcall(function() local fw = hl.get_window(sel); if fw and fw.floating then hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" })) end end)\n' +
-        '  pcall(function() if fsSel and fsSel ~= sel then ' + fullscreenBodyLua('fsSel', 'fsMode') + ' end end)\n' +
-        '  pcall(function() if ownMode ~= 0 then ' + fullscreenBodyLua('sel', 'ownMode') + ' end end)\n' +
+        // The window was tiled on entry, so any floating state here is ours to undo. A failing
+        // cleanup step folds into ok/err so it is reported too (the first error wins).
+        '  local function step(f) local g, e = pcall(f) if not g then ok, err = false, err or e end end\n' +
+        '  step(function() local fw = hl.get_window(sel); if fw and fw.floating then hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" })) end end)\n' +
+        '  step(function() if fsSel and fsSel ~= sel then ' + fullscreenBodyLua('fsSel', 'fsMode') + ' end end)\n' +
+        '  step(function() if ownMode ~= 0 then ' + fullscreenBodyLua('sel', 'ownMode') + ' end end)\n' +
         '  hl.config({ dwindle = { smart_split = smart, use_active_for_splits = useActive } })\n' +
         '  ' + reportLua('tiled insert') + '\n' +
         '  ' + restoreFocusLua('prevW', 'cur') + '\n' +

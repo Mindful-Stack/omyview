@@ -429,7 +429,7 @@ TestCase {
     // A chunk that fails to parse is dropped silently by the compositor, so beyond substring
     // checks we sanity-check that every do/then/function( opener has a matching end.
     function luaBalanced(s) {
-        var open = (s.match(/\b(do|then|function\s*\()/g) || []).length
+        var open = (s.match(/\b(do|then|function)\b/g) || []).length   // anonymous or named functions
         var elseifs = (s.match(/\belseif\b/g) || []).length   // `elseif … then` shares the if's end
         var close = (s.match(/\bend\b/g) || []).length
         return open - elseifs === close
@@ -482,16 +482,18 @@ TestCase {
     // chunk did. A swallowed error is reported (compositor log + on-screen notification).
     function test_tiled_insert_lua_cleanup_is_outside_the_risky_pcall_and_reports() {
         var lua = Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 })
-        var risky = lua.indexOf('local ok, err = pcall(function()')
+        var risky = lua.lastIndexOf('local ok, err = pcall(function()')   // the layout guard has its own, earlier
         verify(risky >= 0, "risky steps capture ok/err")
         var riskyEnd = lua.indexOf('end)', lua.indexOf('cursor.move(', risky))
         verify(riskyEnd > risky, "the cursor move is the last risky step")
         var unfloat = lua.indexOf('if fw and fw.floating then hl.dispatch(hl.dsp.window.float(')
         verify(unfloat > riskyEnd, "un-float re-reads floating state and runs after the pcall")
-        verify(lua.indexOf('pcall(function() if fsSel and fsSel ~= sel then') > riskyEnd, "workspace fullscreen re-apply is its own guarded step")
-        verify(lua.indexOf('pcall(function() if ownMode ~= 0 then') > riskyEnd, "own fullscreen re-apply is its own guarded step")
-        verify(lua.lastIndexOf('smart_split = smart') > lua.lastIndexOf('pcall(function() if ownMode'), "config restored after every guarded cleanup step")
-        verify(lua.indexOf('if not ok then') > lua.lastIndexOf('smart_split = smart'), "report after the config restore")
+        verify(lua.indexOf('local function step(f) local g, e = pcall(f) if not g then ok, err = false, err or e end end') > riskyEnd,
+               "cleanup steps are guarded and fold their failure into ok/err")
+        verify(lua.indexOf('step(function() if fsSel and fsSel ~= sel then') > riskyEnd, "workspace fullscreen re-apply is its own guarded step")
+        verify(lua.indexOf('step(function() if ownMode ~= 0 then') > riskyEnd, "own fullscreen re-apply is its own guarded step")
+        verify(lua.lastIndexOf('smart_split = smart') > lua.lastIndexOf('step(function() if ownMode'), "config restored after every guarded cleanup step")
+        verify(lua.lastIndexOf('if not ok then') > lua.lastIndexOf('smart_split = smart'), "report after the config restore")
         verify(lua.indexOf('print(msg)') >= 0 && lua.indexOf('hl.notification.create({ text = msg') >= 0, "reported to log and screen")
         verify(lua.indexOf('tiled insert failed') >= 0)
         verify(luaBalanced(lua))
@@ -505,6 +507,8 @@ TestCase {
         verify(lua.indexOf('if layout ~= nil and layout ~= "dwindle" then') >= 0, "unknown key (nil) keeps the dwindle path")
         var fb = lua.indexOf('if not same then hl.dispatch(hl.dsp.window.move({ workspace = "3", follow = false, window = sel })) end', guard)
         verify(fb > guard && fb < lua.indexOf('smart_split = true'), "fallback is a plain silent move, before the dwindle path")
+        verify(lua.lastIndexOf('local ok, err = pcall(function()', fb) > guard && lua.indexOf('if not ok then', fb) < lua.indexOf('smart_split = true'),
+               "the fallback move is guarded and reported too")
         verify(lua.indexOf('return', fb) > fb && lua.indexOf('return', fb) < lua.indexOf('smart_split = true'), "fallback returns before the dwindle path")
     }
     function test_index_of_workspace() {
