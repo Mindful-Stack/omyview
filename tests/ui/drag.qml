@@ -281,6 +281,33 @@ TestCase {
         view.close()
         mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
     }
+    // Re-grabbing while the 100ms release animation is still running must not shift the tile:
+    // the Scale origin moves to the new grab point while the scale is still on its way back
+    // to 1, which would displace the rendered tile by (grab − oldOrigin)·(1 − scale).
+    function test_regrab_during_release_animation_keeps_grab_point_under_pointer() {
+        var t=tile(), g=t.mapToItem(tc,t.width-4,4)   // first grab: right edge
+        mousePress(tc,g.x,g.y,Qt.LeftButton)
+        mouseMove(tc,g.x+12,g.y+2,20)
+        mouseMove(tc,g.x+30,g.y+10,20)
+        mouseRelease(tc,g.x+30,g.y+10,Qt.LeftButton)
+        wait(30)                                        // release animation in flight
+        verify(t.ghostScale < 0.98, "precondition: still animating back to full size")
+        var g2=t.mapToItem(tc,4,4)                      // second grab: left edge, as rendered now
+        mousePress(tc,g2.x,g2.y,Qt.LeftButton)
+        var p=t.mapToItem(tc,t.grabX,t.grabY)
+        fuzzyCompare(p.x,g2.x,1,"grab point under the pointer right after the press")
+        fuzzyCompare(p.y,g2.y,1)
+        mouseMove(tc,g2.x+12,g2.y+2,20)                 // activates the drag
+        var off=t.mapToItem(tc,t.grabX,t.grabY)
+        var offX=off.x-(g2.x+12), offY=off.y-(g2.y+2)
+        mouseMove(tc,g2.x+40,g2.y+16,20)
+        wait(120)                                       // let the shrink animation finish
+        var after=t.mapToItem(tc,t.grabX,t.grabY)
+        fuzzyCompare(after.x-(g2.x+40),offX,1,"no jump-back when the drag activates or animates")
+        fuzzyCompare(after.y-(g2.y+16),offY,1)
+        view.close()
+        mouseRelease(tc,g2.x+40,g2.y+16,Qt.LeftButton)
+    }
     // A drag that never leaves the window's own slot is a no-op on release, so it must not
     // preview an insertion into another tile either: preview and release share one check.
     function test_short_drag_inside_own_slot_previews_nothing_and_dispatches_nothing() {

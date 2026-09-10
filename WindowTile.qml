@@ -31,6 +31,17 @@ Item {
     readonly property real dragOpacity: 0.6
     readonly property alias ghostScale: ghost.xScale
 
+    // Record a new grab point. If the release animation is still running (scale ≠ 1), moving
+    // the Scale origin would displace the rendered tile by (grab − oldOrigin)·(1 − scale) —
+    // a re-grab during those 100ms would jump. Offset x/y by exactly that amount so the grabbed
+    // point stays where the pointer pressed; the drag takes over x/y from here and Overview
+    // rebinds them on release.
+    function beginGrab(gx, gy) {
+        var s = ghost.xScale
+        if (s !== 1) { x -= (gx - grabX) * (1 - s); y -= (gy - grabY) * (1 - s) }
+        grabX = gx; grabY = gy
+    }
+
     HoverHandler { id: hh; enabled: !tile.dragging }
     scale: dragging ? 1 : (hh.hovered ? 1.05 : 0.95)
     transformOrigin: Item.Center

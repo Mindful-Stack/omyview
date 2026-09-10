@@ -186,7 +186,10 @@ pointer and the ghost never covers the highlight) at 0.6 opacity, both animated.
 targeting — workspace hit, anchor tile and side — uses the pointer's canvas position (the
 edge-scroll viewport point plus scroll offset), matching the native drag where the cursor
 decides; the ghost's geometry is irrelevant to it. Floating placement still uses the ghost's
-unscaled top-left, i.e. "the point you grabbed lands under the pointer".
+unscaled top-left, i.e. "the point you grabbed lands under the pointer". A re-grab during the
+release animation (scale still ≠ 1) would displace the tile by (grab − oldOrigin)·(1 − scale)
+when the origin moves; `WindowTile.beginGrab` offsets x/y by exactly that, so the grabbed point
+never leaves the pointer.
 
 Verified with real Quickshell on a nested Lua Hyprland: a lower window dropped at the upper
 window's bottom edge of a vertical stack stays below it (the anchor doubles in height when the

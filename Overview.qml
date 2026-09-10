@@ -586,11 +586,11 @@ Item {
                                     if (m.button !== Qt.LeftButton) return
                                     // A second grab supersedes that address's pending visual state.
                                     delete root.pendingMoves[model.address]
+                                    windowTile.beginGrab(m.x, m.y)   // ghost shrinks around the grab point
                                     root.draggingAddress = model.address
                                     root.dragTile = windowTile
                                     moved = false
                                     drag.target = windowTile
-                                    windowTile.grabX = m.x; windowTile.grabY = m.y   // ghost shrinks around the grab point
                                     var p = mapToItem(flick, m.x, m.y)
                                     root.dragViewportX = p.x; root.dragViewportY = p.y
                                     root.updateDropTarget()
