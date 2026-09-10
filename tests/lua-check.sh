@@ -31,7 +31,9 @@ QtObject { Component.onCompleted: {
     console.log("CHUNK TILED_INSERT " + Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 }))
     console.log("CHUNK TILED_INSERT_NO_ANCHOR " + Logic.tiledInsertLua("0xabc", 3, { anchor: "", side: "", x: 10, y: 20 }))
     console.log("CHUNK FLOATING_MOVE " + Logic.floatingMoveLua("0xabc", 3, { x: 200, y: 1600 }))
-    Qt.quit()
+    // Deferred: Qt 6.4's qml tool checks for a loaded root object right after load and exits 2
+    // ("Did not load any objects") when quit() has already run inside onCompleted.
+    Qt.callLater(Qt.quit)
 } }
 EOF
 
