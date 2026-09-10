@@ -44,14 +44,18 @@ Item {
     readonly property real dragOpacity: 0.6
     readonly property alias ghostScale: ghost.xScale
 
-    // Record a new grab point. If the release animation is still running (scale ≠ 1), moving
-    // the Scale origin would displace the rendered tile by (grab − oldOrigin)·(1 − scale) —
-    // a re-grab during those 100ms would jump. Offset x/y by exactly that amount so the grabbed
-    // point stays where the pointer pressed; the drag takes over x/y from here and Overview
-    // rebinds them on release.
+    // Record a new grab point and take ownership of x/y. If the release animation is still
+    // running (scale ≠ 1), moving the Scale origin would displace the rendered tile by
+    // (grab − oldOrigin)·(1 − scale) — a re-grab during those 90 ms would jump — so offset
+    // x/y by exactly that amount. The assignments are unconditional on purpose: a plain JS
+    // write detaches x/y from their bindings (MouseArea's drag writes from C++ and leaves the
+    // bindings in place, so a glide target changing mid-drag would otherwise re-assert them).
+    // Overview rebinds x/y on release.
     function beginGrab(gx, gy) {
         var s = ghost.xScale
-        if (s !== 1) { x -= (gx - grabX) * (1 - s); y -= (gy - grabY) * (1 - s) }
+        var dx = s !== 1 ? (gx - grabX) * (1 - s) : 0
+        var dy = s !== 1 ? (gy - grabY) * (1 - s) : 0
+        x = x - dx; y = y - dy
         grabX = gx; grabY = gy
     }
 

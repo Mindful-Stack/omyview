@@ -418,7 +418,7 @@ TestCase {
         compare(badges.length, view.boxes.length, "one badge per workspace box")
         var t=tile()
         for (var i=0;i<badges.length;i++) {
-            var b=view.boxes[i]
+            var b=view.boxForWs(badges[i].model.workspaceId)
             verify(badges[i].visible)
             verify(badges[i].x >= b.x && badges[i].y >= b.y, "badge sits inside its box")
             verify(badges[i].z > t.z, "badge stacks above a resting tile")
@@ -825,5 +825,93 @@ TestCase {
         compare(boxItem(3), b3, "the survivor is the same instance")
         compare(b3.x, view.boxes[1].x, "…in the freed column")
         compare(b3.width, view.boxes[1].w)
+    }
+
+    // ---- reconcile motion ----
+
+    // Direct manipulation is never animated: once the drag is active, each pointer move is
+    // reflected in x exactly — even when the grab interrupts a glide in progress, whose
+    // animation must stop writing the moment the drag writes.
+    function test_dragged_tile_follows_pointer_exactly_even_when_grabbed_mid_glide() {
+        view.motion.scale = 1
+        var t = tile(), x0 = t.x
+        view.testModel.setProperty(0, "wx", x0 + 80)      // a reconcile move: the glide starts
+        wait(40)
+        verify(t.x > x0 + 1 && t.x < x0 + 79, "precondition: mid-glide, x=" + t.x)
+        var p = t.mapToItem(tc, t.width/2, t.height/2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x+12, p.y+2, 20)
+        mouseMove(tc, p.x+40, p.y+16, 20)
+        var xa = t.x
+        wait(100)
+        compare(t.x, xa, "the interrupted glide never writes again")
+        mouseMove(tc, p.x+50, p.y+16, 20)
+        compare(t.x, xa + 10, "exactly the pointer delta")
+        view.close()
+        mouseRelease(tc, p.x+50, p.y+16, Qt.LeftButton)
+    }
+    // After a release the tile settles by gliding to whatever geometry the reconcile hands
+    // back (here: a rejected move returning to the authoritative position) — never a jump.
+    function test_tile_settles_by_gliding_after_release() {
+        view.motion.scale = 1
+        client.floating = true; view.rebuild()
+        var t = tile(), before = t.x
+        dragBy(35, 20)
+        var dropX = t.x
+        verify(dropX > before + 10, "held at the drop point, x=" + dropX)
+        view.pendingMoves[client.address].deadline = Date.now() - 1
+        view.rebuild()                                     // rejected → wx returns to `before`
+        compare(view.testModel.get(0).wx, before)
+        verify(Math.abs(t.x - dropX) < 1, "glide starts from the drop point, x=" + t.x)
+        wait(80)
+        verify(t.x > before + 1 && t.x < dropX - 1, "half-way, x=" + t.x)
+        wait(200)
+        compare(t.x, before)
+    }
+    // A rebuild that changes nothing produces no motion: x and width hold still.
+    function test_identical_rebuild_produces_no_motion() {
+        view.motion.scale = 1
+        var t = tile(), x = t.x, w = t.width, b2 = boxItem(2), bx = b2.x
+        view.rebuild(); view.rebuild()
+        wait(30)
+        compare(t.x, x); compare(t.width, w); compare(b2.x, bx)
+        wait(100)
+        compare(t.x, x); compare(t.width, w); compare(b2.x, bx)
+    }
+    // Boxes and badges glide into the freed column when a workspace disappears; the tile
+    // inside a moving box glides with it (same Behavior, same duration).
+    function test_boxes_badges_and_tiles_glide_when_a_workspace_disappears() {
+        view.motion.scale = 1
+        var ws = view.compositor.workspaces.values
+        ws.push({id:3, monitor: ws[0].monitor, toplevels:{values:[]}}); view.rebuild()
+        var other = addTarget(3)                            // a window on workspace 3
+        var b3 = boxItem(3), from = b3.x, badges = canvasItems("wsBadge"), badge3 = badges[badges.length - 1]
+        compare(badge3.model.workspaceId, 3)
+        var children = view.testCanvas.children, t3 = null
+        for (var i = 0; i < children.length; i++)
+            if (children[i].model && children[i].model.address === "0x456") t3 = children[i]
+        var tFrom = t3.x
+        ws.splice(1, 1); view.rebuild()                     // workspace 2 disappears
+        var to = view.boxes[1].x, tTo = view.testModel.get(1).wx
+        verify(to < from && tTo < tFrom)
+        wait(80)
+        verify(b3.x < from - 1 && b3.x > to + 1, "box half-way, x=" + b3.x)
+        verify(badge3.x < from + 6 - 1 && badge3.x > to + 6 + 1, "badge half-way")
+        verify(t3.x < tFrom - 1 && t3.x > tTo + 1, "tile half-way, x=" + t3.x)
+        wait(200)
+        compare(b3.x, to); compare(badge3.x, to + 6); compare(t3.x, tTo)
+    }
+    // The card resizes with a glide when the canvas grows (a second row of workspaces).
+    function test_card_size_glides_when_the_layout_grows() {
+        view.motion.scale = 1
+        var card = view.testCard, h0 = card.implicitHeight
+        var ws = view.compositor.workspaces.values
+        for (var i = 3; i <= 8; i++) ws.push({id:i, monitor: ws[0].monitor, toplevels:{values:[]}})
+        view.rebuild()
+        var h1 = view.testCanvas.implicitHeight + 2 * card.pad + card.hintSpace
+        verify(h1 > h0 + 20, "precondition: a second row")
+        verify(card.implicitHeight < h1 - 1, "glide in flight, h=" + card.implicitHeight)
+        wait(250)
+        fuzzyCompare(card.implicitHeight, Math.min(h1, card.maxCardH), 0.5)
     }
 }

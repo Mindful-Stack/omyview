@@ -328,12 +328,13 @@ Item {
     }
     function endDrag() {
         var tile = dragTile
+        if (tile) tile.restoreDrag()        // Behaviors still off: park at the drop point
         dragTile = null
         draggingAddress = ""
         dropTargetWs = -1
         dropTargetAddress = ""
         dropTargetSide = ""
-        if (tile) tile.restoreDrag()
+        if (tile) tile.rebindTargets()      // Behaviors on: glide to the model
     }
     Timer {
         id: edgeScroll
@@ -367,11 +368,12 @@ Item {
         for (var u = 0; u < d.updates.length; u++) {
             var tu = d.updates[u]
             if (root.draggingAddress === tu.address || pendingMoves[tu.address]) continue   // grab is authoritative
-            var iu = indexOf(tu.address)
-            if (iu >= 0) tilesModel.set(iu, { wx: tu.x, wy: tu.y, ww: tu.w, wh: tu.h,
-                                              title: titleFor(tu.address), cls: clsFor(tu.address), wsid: tu.workspaceId,
-                                              floating: floatingFor(tu.address),
-                                              layer: tu.layer, fullscreen: tu.fullscreen })
+            var iu = indexOf(tu.address); if (iu < 0) continue
+            var row = { wx: tu.x, wy: tu.y, ww: tu.w, wh: tu.h,
+                        title: titleFor(tu.address), cls: clsFor(tu.address),
+                        wsid: tu.workspaceId, floating: floatingFor(tu.address),
+                        layer: tu.layer, fullscreen: tu.fullscreen }
+            if (rowDiffers(tilesModel.get(iu), row)) tilesModel.set(iu, row)
         }
         for (var rmi = 0; rmi < d.removes.length; rmi++) {
             if (root.draggingAddress === d.removes[rmi] || pendingMoves[d.removes[rmi]]) continue // cancel handled elsewhere
@@ -566,6 +568,7 @@ Item {
         onRunningChanged: if (!running) refreshOwed = false
     }
     ListModel { id: tilesModel }
+    // Rows are in first-seen order, not layout order; address them by workspaceId, never by index.
     ListModel { id: boxesModel }
 
     // Window/workspace changes while open: refresh + settle (never an immediate stale rebuild).
@@ -610,6 +613,12 @@ Item {
             readonly property real maxCardH: panel.height > 0 ? panel.height - 64 : 900
             implicitWidth: Math.min(canvas.implicitWidth + pad * 2, maxCardW)
             implicitHeight: Math.min(canvas.implicitHeight + pad * 2 + hintSpace, maxCardH)
+            // Card resize (workspaces added/removed, columns change) glides; the Flickable
+            // viewport follows card.width, the canvas content is already at its new size.
+            Behavior on implicitWidth  { enabled: root.layoutMotion
+                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+            Behavior on implicitHeight { enabled: root.layoutMotion
+                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
             MouseArea { anchors.fill: parent; onClicked: {} }
 
             Item {
@@ -676,6 +685,14 @@ Item {
                             readonly property bool isDrop: root.draggingAddress !== "" &&
                                                            model.workspaceId === root.dropTargetWs
                             x: model.bx; y: model.by; width: model.bw; height: model.bh
+                            Behavior on x      { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on y      { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on width  { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on height { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                             radius: root.boxRadius
                             // a well sunk into the card; no outline
                             color: isDrop ? root.dropWellColor
@@ -727,7 +744,18 @@ Item {
                         model: tilesModel
                         WindowTile {
                             required property var model
-                            x: model.wx; y: model.wy; width: model.ww; height: model.wh
+                            // Layout motion runs on these glide targets, not on x/y: the drag breaks the x/y
+                            // bindings and owns them directly, so a glide still in flight can never fight the
+                            // pointer. Release parks the targets at the drop point (Behaviors off), rebinds x/y,
+                            // then rebinds the targets to the model — that rebind is the settle glide.
+                            property real targetX: model.wx
+                            property real targetY: model.wy
+                            x: targetX; y: targetY
+                            width: model.ww; height: model.wh
+                            Behavior on targetX { enabled: root.layoutMotion && !windowTile.dragging
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on targetY { enabled: root.layoutMotion && !windowTile.dragging
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                             cls: model.cls
                             tileLayer: model.layer
                             fullscreen: model.fullscreen
@@ -744,13 +772,29 @@ Item {
                             floating: model.floating
                             fontFamily: root.fontFamily
                             titleSize: root.captionSize
+                            // Layout motion: reconcile moves and the post-drop settle glide;
+                            // the drag itself writes x/y straight through (Behavior disabled),
+                            // and a drag write stops any glide that was still running.
+                            Behavior on width  { enabled: root.layoutMotion && !windowTile.dragging
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on height { enabled: root.layoutMotion && !windowTile.dragging
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                             id: windowTile
                             readonly property bool dragMoved: dragArea.moved
+                            // Called while `dragging` is still true (Behaviors off): park the glide targets at the
+                            // drop point and give x/y their bindings back, so nothing moves yet.
                             function restoreDrag() {
                                 dragArea.drag.target = undefined
                                 dragArea.moved = false
-                                x = Qt.binding(function () { return model.wx })
-                                y = Qt.binding(function () { return model.wy })
+                                targetX = x; targetY = y
+                                x = Qt.binding(function () { return targetX })
+                                y = Qt.binding(function () { return targetY })
+                            }
+                            // Called after `dragging` is cleared (Behaviors on): rebinding the targets to the model
+                            // glides from the drop point to wherever the model says — the settle, or the snap-back.
+                            function rebindTargets() {
+                                targetX = Qt.binding(function () { return model.wx })
+                                targetY = Qt.binding(function () { return model.wy })
                             }
                             Component.onDestruction: {
                                 if (root.dragTile === windowTile) root.endDrag()
@@ -770,9 +814,12 @@ Item {
                                     delete root.pendingMoves[model.address]
                                     delete root.pendingFullscreen[model.address]
                                     root.setTileRoles(model.address, { fsPending: false })
-                                    windowTile.beginGrab(m.x, m.y)   // ghost shrinks around the grab point
+                                    // Mark the drag first: the layout Behaviors are gated on
+                                    // `dragging`, and beginGrab may offset x/y (re-grab during
+                                    // the release animation), which must place, not glide.
                                     root.draggingAddress = model.address
                                     root.dragTile = windowTile
+                                    windowTile.beginGrab(m.x, m.y)   // ghost shrinks around the grab point
                                     moved = false
                                     drag.target = windowTile
                                     var p = mapToItem(flick, m.x, m.y)
@@ -821,6 +868,10 @@ Item {
                             required property var model
                             objectName: "wsBadge"
                             x: model.bx + 6; y: model.by + 6
+                            Behavior on x { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on y { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                             z: 40   // above resting/hovered tiles, below the selection frame
                             height: badgeText.implicitHeight + 6
                             width: Math.max(height, badgeText.implicitWidth + 10)
