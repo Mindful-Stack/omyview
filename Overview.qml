@@ -66,8 +66,9 @@ Item {
     // Layout Behaviors (frame, tiles, boxes, card size) run only when motion is on and the
     // entrance is not playing: delegates are created at their final geometry, and the settle
     // rebuilds during the first 200 ms must place, not glide. `enterAnim` arrives in Task 4;
-    // until then this is `motion.enabled` alone.
-    readonly property bool layoutMotion: motion.enabled && !enterAnim.running
+    // until then this is `motion.enabled` alone. And never while closed — reconcile rebuilds
+    // keep running after close, and a glide started then would finish under the next entrance.
+    readonly property bool layoutMotion: motion.enabled && opened && !enterAnim.running
 
     // headerH is the chip band per monitor group; logic.js lays it out only when more than
     // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.

@@ -863,9 +863,9 @@ TestCase {
         view.rebuild()                                     // rejected → wx returns to `before`
         compare(view.testModel.get(0).wx, before)
         verify(Math.abs(t.x - dropX) < 1, "glide starts from the drop point, x=" + t.x)
-        wait(80)
+        wait(60)
         verify(t.x > before + 1 && t.x < dropX - 1, "half-way, x=" + t.x)
-        wait(200)
+        wait(220)
         compare(t.x, before)
     }
     // A rebuild that changes nothing produces no motion: x and width hold still.
@@ -877,6 +877,16 @@ TestCase {
         compare(t.x, x); compare(t.width, w); compare(b2.x, bx)
         wait(100)
         compare(t.x, x); compare(t.width, w); compare(b2.x, bx)
+    }
+    // Layout glides must not start while the picker is closed: `_reconcileStep` and friends
+    // keep rebuilding after close, and a glide begun then would still be running (Behaviors
+    // don't stop an in-flight transition) if the picker reopens within its duration.
+    function test_no_layout_motion_starts_while_closed() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.testModel.setProperty(0, "wx", view.testModel.get(0).wx + 80)
+        compare(tile().x, view.testModel.get(0).wx, "placed, not glided, while closed")
+        view.open(); wait(350)                              // leave the fixture clean
     }
     // Boxes and badges glide into the freed column when a workspace disappears; the tile
     // inside a moving box glides with it (same Behavior, same duration).
