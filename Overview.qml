@@ -105,18 +105,27 @@ Item {
         Hyprland.dispatch('hl.dsp.window.move({ x = "' + pos.x + '", y = "' + pos.y +
                           '", window = "address:' + addr + '" })')
     }
-    // Tiled anchor for a drop centre inside workspace `workspaceId`: the tiled tile under the
-    // point, else the closest tiled tile in that box (dwindle's own getClosestNode fallback).
-    function tiledAnchorAt(addr, workspaceId, x, y) {
-        var best = "", bestD = Infinity
-        for (var i = tilesModel.count - 1; i >= 0; i--) {
+    // Tiles that can anchor a tiled insert inside workspace `workspaceId`: the tiled, settled
+    // tiles other than the dragged one, in stacking order.
+    function tiledAnchorCandidates(addr, workspaceId) {
+        var out = []
+        for (var i = 0; i < tilesModel.count; i++) {
             var tile = tilesModel.get(i), win = _windowByAddress[tile.address]
             if (tile.address === addr || tile.wsid !== workspaceId || !win ||
                 win.floating || win.fullscreen || pendingMoves[tile.address]) continue
-            var d = Logic.rectDistanceSq({ x: tile.wx, y: tile.wy, w: tile.ww, h: tile.wh }, x, y)
-            if (d < bestD) { bestD = d; best = tile.address }
+            out.push({ x: tile.wx, y: tile.wy, w: tile.ww, h: tile.wh, address: tile.address })
         }
-        return best
+        return out
+    }
+    // Where a tiled drop of `win` centred at (cx, cy) inside `targetWs` would insert, or null
+    // when it should do nothing. One eligibility check shared by the drag preview and the
+    // release, so what is highlighted is exactly what a release does (see Logic.tiledDropPlan).
+    function tiledDropPlan(addr, win, targetWs, cx, cy) {
+        var box = boxForWs(targetWs), mon = box ? _monByName[box.monitorName] : null
+        if (!box || !mon) return null
+        var same = targetWs === win.workspaceId
+        var own = same ? Logic._tileRect(win, mon, box, params) : null
+        return Logic.tiledDropPlan(tiledAnchorCandidates(addr, targetWs), same, own, cx, cy)
     }
     function tileRectFor(addr) {
         for (var i = 0; i < tilesModel.count; i++) {
@@ -130,14 +139,10 @@ Item {
     // re-organised around the hovered window. Returns false when nothing should happen: a
     // drop back onto its own slot, or a lone tiled window dropped inside its own workspace.
     function startTiledInsert(addr, win, targetWs, box, mon, cx, cy, dropX, dropY) {
-        var anchorAddr = tiledAnchorAt(addr, targetWs, cx, cy)
-        var anchor = anchorAddr ? _windowByAddress[anchorAddr] : null
-        if (targetWs === win.workspaceId) {
-            var own = Logic._tileRect(win, mon, box, params)
-            if (!anchor || (own && cx >= own.x && cx <= own.x + own.w &&
-                                   cy >= own.y && cy <= own.y + own.h)) return false
-        }
-        var point = Logic.dropAnchorPoint(cx, cy, box, mon, params, anchor)
+        var plan = tiledDropPlan(addr, win, targetWs, cx, cy)
+        if (!plan) return false
+        // Only used when there is no anchor window to measure inside the compositor.
+        var fallback = Logic.dropToWindowPos(cx, cy, box, mon, params)
         // Optimistic: the tile stays at the drop point until fresh geometry differs from the
         // pre-drop one (a cross-workspace insert differs by workspace at once).
         pendingMoves[addr] = { workspaceId: targetWs, pos: null, deadline: Date.now() + 1800,
@@ -147,7 +152,8 @@ Item {
             tilesModel.set(i, { wx: dropX, wy: dropY, wsid: targetWs })
             break
         }
-        Hyprland.dispatch(Logic.tiledInsertLua(addr, targetWs, point.x, point.y))
+        Hyprland.dispatch(Logic.tiledInsertLua(addr, targetWs,
+            { anchor: plan.anchor, side: plan.side, x: fallback.x, y: fallback.y }))
         return true
     }
     function submitDrop(addr, targetWs, dropX, dropY) {
@@ -233,9 +239,9 @@ Item {
         dropTargetWs = ws === null ? -1 : ws
         var win = _windowByAddress[draggingAddress]
         var tiledDrag = win && !win.floating && !win.fullscreen && !win.grouped && ws !== null
-        dropTargetAddress = tiledDrag ? tiledAnchorAt(draggingAddress, ws, cx, cy) : ""
-        var r = dropTargetAddress ? tileRectFor(dropTargetAddress) : null
-        dropTargetSide = r ? Logic.dropSide(r, cx, cy) : ""
+        var plan = tiledDrag ? tiledDropPlan(draggingAddress, win, ws, cx, cy) : null
+        dropTargetAddress = plan ? plan.anchor : ""
+        dropTargetSide = plan ? plan.side : ""
     }
     function endDrag() {
         var tile = dragTile

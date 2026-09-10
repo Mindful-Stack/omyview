@@ -248,6 +248,39 @@ TestCase {
         compare(view.compositor.commands.length,0)
         compare(tile().x,before)
     }
+    // A drag that never leaves the window's own slot is a no-op on release, so it must not
+    // preview an insertion into another tile either: preview and release share one check.
+    function test_short_drag_inside_own_slot_previews_nothing_and_dispatches_nothing() {
+        addTarget(1)
+        var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        mouseMove(tc,p.x+20,p.y+6,20)
+        compare(view.dropTargetWs,1,"still over its own workspace")
+        compare(view.dropTargetAddress,"","no anchor while inside the own slot")
+        compare(view.dropTargetSide,"")
+        mouseRelease(tc,p.x+20,p.y+6,Qt.LeftButton)
+        compare(view.compositor.commands.length,0,"release must not dispatch")
+        verify(view.pendingMoves[client.address] === undefined)
+    }
+    // The dispatched Lua names the anchor and the side the preview showed; the point is
+    // measured inside the compositor after detaching, not taken from the overview's layout.
+    function test_tiled_drop_dispatches_previewed_anchor_and_side() {
+        addTarget(1)
+        var target=view.testModel.get(1), t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        var goal=view.testCanvas.mapToItem(tc,target.wx+target.ww/2,target.wy+target.wh-2)
+        mouseMove(tc,goal.x,goal.y,20)
+        compare(view.dropTargetAddress,"0x456")
+        compare(view.dropTargetSide,"bottom")
+        mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
+        compare(view.compositor.commands.length,1)
+        var cmd=view.compositor.commands[0]
+        verify(cmd.indexOf('"address:0x456"')>=0,"anchor identity is passed to Lua")
+        verify(cmd.indexOf('== "bottom" then')>=0,"side is passed to Lua")
+        verify(cmd.indexOf('hl.get_window(anchorSel)')>=0,"anchor geometry is measured in Lua")
+    }
     function test_grouped_tiled_window_is_not_retiled() {
         addTarget(1); client.grouped=["0x123"]; view.rebuild()
         dragOntoTarget(1)

@@ -126,6 +126,24 @@ dump() { hc clients -j | jq '[.[]|{address,at,size,workspace:.workspace.id}]'; c
 second=$(spawn_window)
 third=$(spawn_window)
 sleep 0.4
+# Reviewer's case (PR #2): with two vertically stacked windows, dropping the LOWER one near the
+# UPPER one's bottom edge previewed "bottom" but inserted it above. Detaching the lower window
+# first doubles the upper one's height, so a point taken from the pre-drop layout ends up in the
+# upper half of the expanded anchor. The placement must come from the anchor's geometry after
+# detachment. First build the stack with the tool itself (drop `third` on `second`'s bottom
+# edge, whatever dwindle's initial arrangement), then repeat the same drop on the stack.
+stack_below() {   # $1 upper, $2 lower: drop `lower` at `upper`'s bottom edge and assert it stays below
+    local ux uy uw uh lx ly lw lh lws
+    read -r ux uy uw uh _ < <(box "$1")
+    ipc dropPoint "$2" 1 $((ux + uw / 2)) $((uy + uh - 8))
+    wait_pending
+    read -r ux uy uw uh _ < <(box "$1"); read -r lx ly lw lh lws < <(box "$2")
+    [[ "$lws" == 1 && "$lx" == "$ux" && "$lw" == "$uw" && "$ly" -ge $((uy + uh)) ]]
+}
+stack_below "$second" "$third" || { echo "FAIL: could not stack third below second"; dump; exit 1; }
+stack_below "$second" "$third" || {
+    echo "FAIL: lower window dropped at the upper window's bottom edge was not kept below it"; dump; exit 1; }
+echo 'PASS: production tiled drop places on the previewed side after detachment re-lays out the workspace'
 read -r tx ty tw th _ < <(box "$third")
 pointer_before=$(hc cursorpos -j | jq -c .)
 ipc dropPoint "$addr" 1 $((tx + 8)) $((ty + th / 2))

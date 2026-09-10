@@ -155,7 +155,7 @@ shallow angles and top/bottom for steep ones.
 Omyview replays exactly that in **one atomic Lua chunk** (Lua-config Hyprland evaluates a
 `dispatch` payload as `hl.dispatch(<payload>)` and accepts a function; nothing renders in
 between): float the window → move it silently to the target workspace if needed → warp the
-cursor to the drop point → un-float → restore the cursor. Two config values are overridden for
+cursor onto the anchor → un-float → restore the cursor. Two config values are overridden for
 the duration and restored afterwards, even if a step throws: `dwindle:smart_split = true`, so the
 side follows the cursor regardless of the user's `force_split`; and
 `dwindle:use_active_for_splits = false` when the target is the focused monitor's active
@@ -164,14 +164,24 @@ workspaces keep it on: dwindle already falls back to the closest node there). Fo
 touched — focusing a window warps the cursor and would corrupt the drop point. The request is
 sent as a single line: Quickshell's dispatch path drops multi-line requests silently.
 
-The anchor is chosen in the overview (tile under the drop centre, else the closest tiled tile
-in that box) and the cursor point is clamped inside its real rect, so the compositor's hit
-test cannot miss it. `Logic.dropSide` mirrors the smart-split rule for the drag preview.
+The overview decides **what** to do, the compositor decides **where**. `Logic.tiledDropPlan`
+picks the anchor (tile under the pointer, else the closest tiled tile in that box) and the
+side by the smart-split rule (`Logic.dropSide`), and is the single eligibility check behind
+both the drag preview and the release — what is highlighted is exactly what a drop does. The
+Lua chunk receives the anchor's address and the side, not a point: floating the dragged window
+detaches it and re-lays out the workspace (its neighbours grow into its slot), so any point
+taken from the pre-drop layout can land on the wrong side of the anchor or in another window.
+After the float, Lua reads the anchor's fresh `at`/`size` and warps the cursor to the midpoint
+of the requested edge, inset by 2px; under the slope rule that edge midpoint always resolves to
+that side. A global fallback point is used only when the destination has nothing tiled.
 Two windows therefore swap; more get re-organised around the hovered window. A drop back onto
 the window's own slot, a lone tiled window dropped into its own workspace, and grouped or
-fullscreen windows do nothing (grouped/fullscreen cross-workspace drops still transfer).
-The tile holds the drop point until fresh geometry differs from the pre-drop one.
+fullscreen windows do nothing (grouped/fullscreen cross-workspace drops still transfer), and
+none of these previews an insertion. The tile holds the drop point until fresh geometry
+differs from the pre-drop one.
 
-Verified with real Quickshell on a nested Lua Hyprland: insert left of / above the hovered
-window on the active workspace, and right of a window on a hidden workspace, with the active
-workspace, cursor and both config values unchanged afterwards.
+Verified with real Quickshell on a nested Lua Hyprland: a lower window dropped at the upper
+window's bottom edge of a vertical stack stays below it (the anchor doubles in height when the
+window detaches), insert left of / above the hovered window on the active workspace, and right
+of a window on a hidden workspace, with the active workspace, cursor and both config values
+unchanged afterwards.

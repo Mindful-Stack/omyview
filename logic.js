@@ -165,35 +165,54 @@ function rectDistanceSq(rect, px, py) {
     return dx * dx + dy * dy
 }
 
-// Real global point for a canvas point inside a workspace cell, pulled strictly inside the
-// anchor window's rect (when given) so the compositor's hit test resolves to that window even
-// after rounding, gaps, or borders. `anchor` is a buildInput window ({ax, ay, sw, sh}).
-function dropAnchorPoint(px, py, box, mon, P, anchor) {
-    var p = dropToWindowPos(px, py, box, mon, P)
-    if (!anchor) return p
-    var inset = 2
-    return { x: Math.round(Math.max(anchor.ax + inset, Math.min(p.x, anchor.ax + anchor.sw - 1 - inset))),
-             y: Math.round(Math.max(anchor.ay + inset, Math.min(p.y, anchor.ay + anchor.sh - 1 - inset))) }
+// Where a tiled drop centred at (cx, cy) inside a workspace box would insert, shared by the
+// drag preview and the release so they can never disagree. `candidates` are the canvas rects
+// ({x, y, w, h, address}) of the tiled windows that can anchor the insert, in stacking order
+// (later wins a tie); `own` is the dragged tile's own rect when the drop is inside its own
+// workspace (`sameWorkspace`), or null. Returns { anchor, side } — anchor "" when the target
+// workspace has nothing tiled and the window simply fills it — or null when nothing should
+// happen: a drop back onto the window's own slot, or a lone tiled window dropped inside its
+// own workspace.
+function tiledDropPlan(candidates, sameWorkspace, own, cx, cy) {
+    if (own && cx >= own.x && cx <= own.x + own.w && cy >= own.y && cy <= own.y + own.h) return null
+    var best = null, bestD = Infinity
+    for (var i = candidates.length - 1; i >= 0; i--) {
+        var d = rectDistanceSq(candidates[i], cx, cy)
+        if (d < bestD) { bestD = d; best = candidates[i] }
+    }
+    if (!best) return sameWorkspace ? null : { anchor: "", side: "" }
+    return { anchor: best.address, side: dropSide(best, cx, cy) }
 }
 
 // One atomic Lua chunk (Hyprland Lua-config mode evaluates `dispatch` payloads as
 // `hl.dispatch(<payload>)`, and accepts a function) that replays a native tiled drop:
 //   float the window (detaches it from the tree) → move it silently to the target workspace if
-//   needed → warp the cursor to the drop point → un-float (re-tiles at the cursor) → restore.
+//   needed → warp the cursor onto the anchor's `side` edge → un-float (re-tiles at the cursor)
+//   → restore.
+// Detaching the window re-lays out the target workspace, so the cursor point is computed from
+// the anchor's geometry AFTER the float, not from the overview's pre-drop layout: the edge
+// midpoint of the requested side (inset so the hit test resolves to the anchor), which under
+// dwindle's smart-split slope rule always picks that side. `placement` is { anchor, side, x, y }:
+// anchor is the window address to split (or "" when the workspace has nothing tiled) and x/y
+// the global fallback point used when there is no anchor to measure.
 // While it runs, smart_split is forced on so the side follows the cursor regardless of the
 // user's force_split, and use_active_for_splits is turned off on the focused monitor's active
 // workspace so the anchor is the window under the cursor rather than the focused window.
 // Hidden workspaces keep use_active on: there dwindle already falls back to the closest node
 // by geometry. Everything runs inside the compositor before the next frame, so nothing flashes,
 // and config, cursor and focus are restored even if a step throws.
-function tiledInsertLua(addr, targetWs, x, y) {
-    var ws = String(parseInt(targetWs, 10)), gx = Math.round(x), gy = Math.round(y)
+function tiledInsertLua(addr, targetWs, placement) {
+    var ws = String(parseInt(targetWs, 10))
+    var gx = Math.round(placement.x), gy = Math.round(placement.y)
+    var side = { left: 1, right: 1, top: 1, bottom: 1 }[placement.side] ? placement.side : ""
+    var anchorSel = placement.anchor ? '"address:' + placement.anchor + '"' : 'nil'
     // Built readable, then flattened to one line: the IPC request is a single line.
     return (
         'function()\n' +
         '  local sel = "address:' + addr + '"\n' +
         '  local w = hl.get_window(sel)\n' +
         '  if not w or w.floating then return end\n' +
+        '  local anchorSel = ' + anchorSel + '\n' +
         '  local cur = hl.get_cursor_pos()\n' +
         '  local smart = hl.get_config("dwindle.smart_split")\n' +
         '  local useActive = hl.get_config("dwindle.use_active_for_splits")\n' +
@@ -205,7 +224,17 @@ function tiledInsertLua(addr, targetWs, x, y) {
         '    if w.workspace == nil or w.workspace.id ~= ' + ws + ' then\n' +
         '      hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel }))\n' +
         '    end\n' +
-        '    hl.dispatch(hl.dsp.cursor.move({ x = ' + gx + ', y = ' + gy + ' }))\n' +
+        '    local x, y = ' + gx + ', ' + gy + '\n' +
+        '    local a = anchorSel and hl.get_window(anchorSel) or nil\n' +
+        '    if a and a.at and a.size then\n' +
+        '      local inset = 2\n' +
+        '      x, y = a.at.x + a.size.x / 2, a.at.y + a.size.y / 2\n' +
+        '      if "' + side + '" == "left" then x = a.at.x + inset\n' +
+        '      elseif "' + side + '" == "right" then x = a.at.x + a.size.x - 1 - inset\n' +
+        '      elseif "' + side + '" == "top" then y = a.at.y + inset\n' +
+        '      elseif "' + side + '" == "bottom" then y = a.at.y + a.size.y - 1 - inset end\n' +
+        '    end\n' +
+        '    hl.dispatch(hl.dsp.cursor.move({ x = math.floor(x + 0.5), y = math.floor(y + 0.5) }))\n' +
         '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
         '  end)\n' +
         '  hl.config({ dwindle = { smart_split = smart, use_active_for_splits = useActive } })\n' +
