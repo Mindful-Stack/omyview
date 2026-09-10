@@ -183,43 +183,73 @@ TestCase {
         var source=view.testModel.get(0), target=view.testModel.get(1)
         dragBy(target.wx-source.wx+12,target.wy-source.wy+2)
     }
-    function test_tiled_swap_uses_explicit_addresses() {
+    // A tiled drop replays a native drag-and-drop as ONE atomic Lua dispatch (float → cursor →
+    // un-float); nothing else is sent, and the tile holds the drop point until the compositor's
+    // fresh geometry differs from the pre-drop one.
+    function test_tiled_drop_replays_native_insert_in_one_dispatch() {
         addTarget(1)
         dragOntoTarget(1)
         compare(view.compositor.commands.length,1)
         var cmd=view.compositor.commands[0]
-        verify(cmd.indexOf('hl.dsp.window.swap(')>=0)
-        verify(cmd.indexOf('window = "address:0x123"')>=0)
-        verify(cmd.indexOf('target = "address:0x456"')>=0)
-        verify(cmd.indexOf('hl.get_cursor_pos()')>=0,"Swap must restore cursor")
+        verify(cmd.indexOf('hl.dsp.window.float(')>=0)
+        verify(cmd.indexOf('hl.dsp.cursor.move(')>=0)
+        verify(cmd.indexOf('"address:0x123"')>=0)
+        verify(cmd.indexOf('smart_split = true')>=0)
+        verify(cmd.indexOf('window.swap')<0)
+        var pending=view.pendingMoves[client.address]
+        verify(pending !== undefined && pending.pos === null)
+        var shown=tile().x
+        view.rebuild()
+        compare(tile().x,shown,"Stale geometry must not undo the optimistic drop")
+        client.at=[1000,1540]; view.rebuild()   // the compositor re-tiled it
+        verify(view.pendingMoves[client.address] === undefined)
+        compare(view.compositor.commands.length,1,"No follow-up dispatch after the atomic insert")
     }
-    function test_tiled_cross_workspace_places_at_target() {
-        var other=addTarget(2)
+    function test_tiled_drag_previews_insertion_side() {
+        addTarget(1)
+        var source=view.testModel.get(0), target=view.testModel.get(1)
+        var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        // hover the right quarter of the target tile, vertically centred → "right"
+        var dx=(target.wx+target.ww*0.9)-(source.wx+source.ww/2)
+        var dy=(target.wy+target.wh/2)-(source.wy+source.wh/2)
+        mouseMove(tc,p.x+dx,p.y+dy,20)
+        compare(view.dropTargetAddress,"0x456")
+        compare(view.dropTargetSide,"right")
+        // and the top edge → "top"
+        mouseMove(tc,p.x+(target.wx+target.ww/2)-(source.wx+source.ww/2),p.y+(target.wy+2)-(source.wy+source.wh/2),20)
+        compare(view.dropTargetSide,"top")
+        view.close()
+        mouseRelease(tc,p.x+dx,p.y+dy,Qt.LeftButton)
+        compare(view.dropTargetSide,"")
+    }
+    function test_tiled_cross_workspace_inserts_in_one_dispatch() {
+        addTarget(2)
         dragOntoTarget(2)
         compare(view.compositor.commands.length,1)
-        verify(view.compositor.commands[0].indexOf('workspace = 2')>=0)
+        var cmd=view.compositor.commands[0]
+        verify(cmd.indexOf('workspace = "2"')>=0)
+        verify(cmd.indexOf('hl.dsp.window.float(')>=0)
+        compare(view.testModel.get(0).wsid,2,"tile shows the target workspace at once")
         var ws=view.compositor.workspaces.values
         ws[0].toplevels.values=[]
-        // Model Hyprland's default insertion before targeted rearrangement.
-        client.at=[1000,2000];client.size=[600,300]
+        client.at=[400,1540]
         ws[1].toplevels.values.push({lastIpcObject:client})
         view.rebuild()
-        compare(view.compositor.commands.length,2)
-        verify(view.compositor.commands[1].indexOf('hl.dsp.window.swap(')>=0)
-        // Both tiles stay optimistic until swapped geometry arrives.
-        var a=view.testModel.get(0).wx,b=view.testModel.get(1).wx
-        view.rebuild()
-        compare(view.testModel.get(0).wx,a);compare(view.testModel.get(1).wx,b)
-        var oldAt=client.at,oldSize=client.size
-        client.at=other.at;client.size=other.size
-        other.at=oldAt;other.size=oldSize
-        view.rebuild()
         compare(Object.keys(view.pendingMoves).length,0)
+        compare(view.compositor.commands.length,1,"No follow-up dispatch after the atomic insert")
         compare(view.testModel.get(0).wsid,2)
-        compare(view.testModel.get(1).wsid,2)
     }
-    function test_tiled_drop_ignores_floating_target() {
+    function test_lone_tiled_window_dropped_in_own_workspace_snaps_back() {
         var other=addTarget(1);other.floating=true;view.rebuild()
+        var before=tile().x
+        dragOntoTarget(1)
+        compare(view.compositor.commands.length,0)
+        compare(tile().x,before)
+    }
+    function test_grouped_tiled_window_is_not_retiled() {
+        addTarget(1); client.grouped=["0x123"]; view.rebuild()
         dragOntoTarget(1)
         compare(view.compositor.commands.length,0)
     }

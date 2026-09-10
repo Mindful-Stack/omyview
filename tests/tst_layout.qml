@@ -322,4 +322,56 @@ TestCase {
         compare(Logic.edgeScrollDelta(400,400,0,300,16),0)
     }
 
+    // dropSide mirrors dwindle's smart-split rule (slope of point-from-centre vs aspect), so
+    // the drag preview shows the half the compositor will actually split into.
+    function test_drop_side_follows_smart_split_rule() {
+        var wide = { x: 0, y: 0, w: 400, h: 200 }
+        compare(Logic.dropSide(wide, 20, 100), "left")
+        compare(Logic.dropSide(wide, 380, 100), "right")
+        compare(Logic.dropSide(wide, 200, 10), "top")
+        compare(Logic.dropSide(wide, 200, 190), "bottom")
+        compare(Logic.dropSide(wide, 380, 150), "right")    // shallow angle wins near a corner
+        compare(Logic.dropSide(wide, 250, 190), "bottom")   // steep angle wins near a corner
+        var tall = { x: 0, y: 0, w: 200, h: 400 }
+        compare(Logic.dropSide(tall, 100, 380), "bottom")
+        compare(Logic.dropSide(tall, 190, 220), "right")
+        compare(Logic.dropSide(tall, 100, 200), "top")      // exact centre: NaN slope → top, like the C++
+    }
+    function test_rect_distance_is_zero_inside_and_grows_outside() {
+        var r = { x: 10, y: 10, w: 100, h: 50 }
+        compare(Logic.rectDistanceSq(r, 50, 30), 0)
+        compare(Logic.rectDistanceSq(r, 0, 30), 100)
+        compare(Logic.rectDistanceSq(r, 120, 70), 200)
+    }
+    // The cursor point handed to the compositor must land inside the anchor window even when
+    // the drop centre is outside every tile (gap/edge): the hit test must resolve to the anchor.
+    function test_drop_anchor_point_lands_inside_anchor() {
+        var mon = edp(); mon.y = 1440
+        var r = Logic.layout({ monitors:[mon],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true}],
+            windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        var b = boxById(r,1)
+        var anchor = { ax: 100, ay: 1500, sw: 300, sh: 200 }
+        var p = Logic.dropAnchorPoint(b.x - 50, b.y - 50, b, mon, params, anchor)
+        verify(p.x >= anchor.ax + 2 && p.x <= anchor.ax + anchor.sw - 3, "x inside anchor")
+        verify(p.y >= anchor.ay + 2 && p.y <= anchor.ay + anchor.sh - 3, "y inside anchor")
+        var q = Logic.dropAnchorPoint(b.x + b.w / 2, b.y + b.h / 2, b, mon, params, null)
+        verify(q.x > 0 && q.y > 1440, "no anchor: plain global point on the monitor")
+    }
+    // The atomic Lua chunk must replay a native drop in order: float → (move) → cursor → un-float,
+    // with smart_split forced on and the cursor restored, and never embed NaN/undefined.
+    function test_tiled_insert_lua_replays_native_drop() {
+        var lua = Logic.tiledInsertLua("0xabc", 3, 512.6, 1800.2)
+        verify(lua.indexOf('address:0xabc') >= 0)
+        verify(lua.indexOf('smart_split = true') >= 0)
+        verify(lua.indexOf('workspace = "3"') >= 0)
+        verify(lua.indexOf('x = 513, y = 1800') >= 0)
+        verify(lua.indexOf('hl.get_cursor_pos()') >= 0)
+        verify(lua.indexOf('NaN') < 0 && lua.indexOf('undefined') < 0)
+        var order = [lua.indexOf('window.float('), lua.indexOf('window.move('),
+                     lua.indexOf('cursor.move('), lua.lastIndexOf('window.float(')]
+        for (var i = 1; i < order.length; i++) verify(order[i] > order[i - 1], "step order")
+        verify(lua.lastIndexOf('smart_split = smart') > lua.lastIndexOf('window.float('), "config restored after re-tile")
+    }
+
 }

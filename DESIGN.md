@@ -142,19 +142,36 @@ and `docs/plans/2026-09-08-v2-previews-drag-drop.md` (task-by-task build).
 - Offscreen Qt tests cover real mouse events and binding restoration. The integration test
   exercises production Overview methods through real Quickshell in a disposable Lua session.
 
-## Addressed tiled drops (2026-09-10)
+## Tiled drops replay a native drag-and-drop (2026-09-10)
 
-The earlier same-workspace tiled snap-back limitation is superseded. Hyprland 0.56.2 accepts
-`hl.dsp.window.swap({window="address:SOURCE", target="address:TARGET"})`. No focus step is
-needed. A Lua function saves `hl.get_cursor_pos()`, dispatches the swap and restores the cursor,
-because the native swap warps it even for hidden workspaces.
+Hyprland has no "insert this window next to that one" IPC, but its own drag-and-drop is not a
+swap either: the dragged window is floated at drag start and simply **re-tiled at the cursor**
+on release (`DragController` → `changeFloatingMode` → `DwindleAlgorithm::addTarget`, 0.56).
+Dwindle then splits the node under the cursor (closest node by geometry when nothing is
+under it, which also covers hidden workspaces) and picks the side by its smart-split rule:
+the slope of (cursor − node centre) against the node's aspect ratio gives left/right for
+shallow angles and top/bottom for steep ones.
 
-Drop hit-testing uses the dragged tile's center and excludes the source, floating/fullscreen
-windows and pending targets. Same-workspace drops swap both tiles optimistically; acknowledgement
-checks both positions and sizes. Cross-workspace drops transfer first, then swap with the chosen
-target using its fresh geometry. The target remains on its workspace. If it disappears or
-becomes ineligible, the completed transfer retains normal tiling. Empty workspace drops also
-use normal tiling. The target tile is highlighted before release.
+Omyview replays exactly that in **one atomic Lua chunk** (Lua-config Hyprland evaluates a
+`dispatch` payload as `hl.dispatch(<payload>)` and accepts a function; nothing renders in
+between): float the window → move it silently to the target workspace if needed → warp the
+cursor to the drop point → un-float → restore the cursor. Two config values are overridden for
+the duration and restored afterwards, even if a step throws: `dwindle:smart_split = true`, so the
+side follows the cursor regardless of the user's `force_split`; and
+`dwindle:use_active_for_splits = false` when the target is the focused monitor's active
+workspace, so the anchor is the window under the cursor rather than the focused window (hidden
+workspaces keep it on: dwindle already falls back to the closest node there). Focus is never
+touched — focusing a window warps the cursor and would corrupt the drop point. The request is
+sent as a single line: Quickshell's dispatch path drops multi-line requests silently.
 
-Verified with real Quickshell and three tiled windows: exchanging positions/sizes without
-changing active workspace or cursor; transferring to a selected slot on a hidden workspace.
+The anchor is chosen in the overview (tile under the drop centre, else the closest tiled tile
+in that box) and the cursor point is clamped inside its real rect, so the compositor's hit
+test cannot miss it. `Logic.dropSide` mirrors the smart-split rule for the drag preview.
+Two windows therefore swap; more get re-organised around the hovered window. A drop back onto
+the window's own slot, a lone tiled window dropped into its own workspace, and grouped or
+fullscreen windows do nothing (grouped/fullscreen cross-workspace drops still transfer).
+The tile holds the drop point until fresh geometry differs from the pre-drop one.
+
+Verified with real Quickshell on a nested Lua Hyprland: insert left of / above the hovered
+window on the active workspace, and right of a window on a hidden workspace, with the active
+workspace, cursor and both config values unchanged afterwards.

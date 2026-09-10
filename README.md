@@ -219,11 +219,14 @@ replaced (`tests/ui/prepare.py`); they need Python 3 as well as Qt6 test tooling
 
 `mise run test-integration` launches an isolated **Lua-configured** Hyprland and real Quickshell.
 It checks repeated floating placement on an offset monitor, floating workspace transfer,
-and tiled workspace transfer without changing the active workspace. Requires Hyprland,
+tiled workspace transfer without changing the active workspace, and tiled drops that re-tile
+left of / above the hovered window and onto a hidden workspace. Requires Hyprland,
 Quickshell, foot and jq, plus a running Wayland session for the nested output.
 
 Floating drops keep the full window within the target monitor's usable bounds. Dropping
-outside a workspace cancels. Drop a tiled window onto another tile to swap within a workspace;
-across workspaces, it moves first and then takes the selected tile's slot. An empty destination
-uses normal tiling. Floating and fullscreen windows are excluded as swap targets.
-Target highlighting and edge scrolling help reach workspaces below the viewport.
+outside a workspace cancels. A **tiled** drop behaves like Hyprland's own drag-and-drop:
+the window is re-tiled as a split of the tile you drop it on, on the side you drop it
+(the hovered half is previewed while dragging). With two windows that is a swap; with more
+it re-organises the layout. This works across workspaces, including hidden ones, without
+changing the active workspace, and an empty destination just fills. Grouped and fullscreen
+windows are not re-tiled. Edge scrolling helps reach workspaces below the viewport.

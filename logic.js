@@ -119,7 +119,8 @@ function layout(input) {
 
 // Reverse of _tileRect's placement: map a dragged tile's canvas top-left back to the window's
 // real global logical top-left, so a floating window can be repositioned to where it was
-// dropped inside its own workspace cell. Tiled placement uses addressed swaps instead.
+// dropped inside its own workspace cell. Tiled placement re-tiles at a cursor point instead
+// (see tiledInsertLua).
 function dropToWindowPos(tileX, tileY, box, mon, P, win) {
     var R = _usableRect(mon)
     var mmW = box.w - 2 * P.cellInset, mmH = box.h - 2 * P.cellInset
@@ -138,6 +139,79 @@ function dropToWindowPos(tileX, tileY, box, mon, P, win) {
     var y = Math.round(Math.max(minY, Math.min(mon.y + R.y + ry, maxY)))
     // The typed dispatcher reserves -1 for "preserve this axis".
     return { x: x === -1 ? -2 : x, y: y === -1 ? -2 : y }
+}
+
+// ---- tiled drop: mirror Hyprland's native drag-and-drop placement ----
+//
+// A native tiled drop is a re-tile at the cursor: dwindle inserts the window as a new split of
+// the node under (or closest to) the cursor, choosing the side by dwindle's smart-split rule —
+// the slope of (cursor - node centre) against the node's aspect ratio picks left/right for
+// shallow angles and top/bottom for steep ones (DwindleAlgorithm::addTarget, 0.56).
+
+// Side of `rect` a point lands on under that rule: "left" | "right" | "top" | "bottom".
+// Division by zero follows IEEE like the C++ (±Infinity → vertical; NaN at the exact centre →
+// "top"), so the preview agrees with what the compositor will do.
+function dropSide(rect, px, py) {
+    var dx = px - (rect.x + rect.w / 2), dy = py - (rect.y + rect.h / 2)
+    if (Math.abs(dy / dx) < rect.h / rect.w) return dx > 0 ? "right" : "left"
+    return dy > 0 ? "bottom" : "top"
+}
+
+// Squared distance from a point to a rect (0 inside) — used to pick the closest tiled tile
+// when a drop lands in a gap, matching dwindle's getClosestNode fallback.
+function rectDistanceSq(rect, px, py) {
+    var dx = Math.max(rect.x - px, 0, px - (rect.x + rect.w))
+    var dy = Math.max(rect.y - py, 0, py - (rect.y + rect.h))
+    return dx * dx + dy * dy
+}
+
+// Real global point for a canvas point inside a workspace cell, pulled strictly inside the
+// anchor window's rect (when given) so the compositor's hit test resolves to that window even
+// after rounding, gaps, or borders. `anchor` is a buildInput window ({ax, ay, sw, sh}).
+function dropAnchorPoint(px, py, box, mon, P, anchor) {
+    var p = dropToWindowPos(px, py, box, mon, P)
+    if (!anchor) return p
+    var inset = 2
+    return { x: Math.round(Math.max(anchor.ax + inset, Math.min(p.x, anchor.ax + anchor.sw - 1 - inset))),
+             y: Math.round(Math.max(anchor.ay + inset, Math.min(p.y, anchor.ay + anchor.sh - 1 - inset))) }
+}
+
+// One atomic Lua chunk (Hyprland Lua-config mode evaluates `dispatch` payloads as
+// `hl.dispatch(<payload>)`, and accepts a function) that replays a native tiled drop:
+//   float the window (detaches it from the tree) → move it silently to the target workspace if
+//   needed → warp the cursor to the drop point → un-float (re-tiles at the cursor) → restore.
+// While it runs, smart_split is forced on so the side follows the cursor regardless of the
+// user's force_split, and use_active_for_splits is turned off on the focused monitor's active
+// workspace so the anchor is the window under the cursor rather than the focused window.
+// Hidden workspaces keep use_active on: there dwindle already falls back to the closest node
+// by geometry. Everything runs inside the compositor before the next frame, so nothing flashes,
+// and config, cursor and focus are restored even if a step throws.
+function tiledInsertLua(addr, targetWs, x, y) {
+    var ws = String(parseInt(targetWs, 10)), gx = Math.round(x), gy = Math.round(y)
+    // Built readable, then flattened to one line: the IPC request is a single line.
+    return (
+        'function()\n' +
+        '  local sel = "address:' + addr + '"\n' +
+        '  local w = hl.get_window(sel)\n' +
+        '  if not w or w.floating then return end\n' +
+        '  local cur = hl.get_cursor_pos()\n' +
+        '  local smart = hl.get_config("dwindle.smart_split")\n' +
+        '  local useActive = hl.get_config("dwindle.use_active_for_splits")\n' +
+        '  local aws = hl.get_active_workspace()\n' +
+        '  local onActive = aws ~= nil and aws.id == ' + ws + '\n' +
+        '  hl.config({ dwindle = { smart_split = true, use_active_for_splits = not onActive } })\n' +
+        '  pcall(function()\n' +
+        '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
+        '    if w.workspace == nil or w.workspace.id ~= ' + ws + ' then\n' +
+        '      hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel }))\n' +
+        '    end\n' +
+        '    hl.dispatch(hl.dsp.cursor.move({ x = ' + gx + ', y = ' + gy + ' }))\n' +
+        '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
+        '  end)\n' +
+        '  hl.config({ dwindle = { smart_split = smart, use_active_for_splits = useActive } })\n' +
+        '  if cur then hl.dispatch(hl.dsp.cursor.move({ x = cur.x, y = cur.y })) end\n' +
+        'end'
+    ).replace(/\n\s*/g, ' ')
 }
 
 function _center(b) { return { x: b.x + b.w / 2, y: b.y + b.h / 2 } }
