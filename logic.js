@@ -311,8 +311,26 @@ function tiledDropPlan(candidates, sameWorkspace, own, cx, cy) {
 // user's force_split, and use_active_for_splits is turned off on the focused monitor's active
 // workspace so the anchor is the window under the cursor rather than the focused window.
 // Hidden workspaces keep use_active on: there dwindle already falls back to the closest node
-// by geometry. Everything runs inside the compositor before the next frame, so nothing flashes,
-// and config, cursor and focus are restored even if a step throws.
+// by geometry. Everything runs inside the compositor before the next frame, so nothing flashes.
+// The risky steps run in a pcall; the un-float, both fullscreen re-applies and the config
+// restore are separate guarded steps that re-read state, so a throw never leaves the window
+// floating, and the error is reported (log + notification). Layouts other than dwindle get a
+// plain silent move: the cursor-based insert is dwindle behaviour.
+// Lua statements that report a failure captured as `ok, err` (from pcall) for the operation
+// `what`: to the compositor log (Hyprland rebinds `print` to its log with a [Lua] prefix) and
+// as an on-screen notification (guarded: hl.notification is missing on older Hyprland). Errors
+// inside our own pcall are otherwise invisible — the compositor only logs uncaught ones.
+// Returns newline-separated statements; the outermost chunk builder must flatten to one line.
+function reportLua(what) {
+    return (
+        'if not ok then\n' +
+        '  local msg = "omyview: ' + what + ' failed: " .. tostring(err)\n' +
+        '  print(msg)\n' +
+        '  pcall(function() hl.notification.create({ text = msg, duration = 4000, icon = "error" }) end)\n' +
+        'end'
+    )
+}
+
 function tiledInsertLua(addr, targetWs, placement) {
     var ws = String(parseInt(targetWs, 10))
     var gx = Math.round(placement.x), gy = Math.round(placement.y)
@@ -327,6 +345,13 @@ function tiledInsertLua(addr, targetWs, placement) {
         '  local anchorSel = ' + anchorSel + '\n' +
         '  local prevW = hl.get_active_window()\n' +
         '  local cur = hl.get_cursor_pos()\n' +
+        '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
+        '  local layout = hl.get_config("general.layout")\n' +
+        '  if layout ~= nil and layout ~= "dwindle" then\n' +
+        '    if not same then hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
+        '    ' + restoreFocusLua('prevW', 'cur') + '\n' +
+        '    return\n' +
+        '  end\n' +
         '  local smart = hl.get_config("dwindle.smart_split")\n' +
         '  local useActive = hl.get_config("dwindle.use_active_for_splits")\n' +
         '  local aws = hl.get_active_workspace()\n' +
@@ -340,10 +365,9 @@ function tiledInsertLua(addr, targetWs, placement) {
         '  if fa ~= "" and fa:sub(1, 2) ~= "0x" then fa = "0x" .. fa end\n' +
         '  local fsSel = fa ~= "" and ("address:" .. fa) or nil\n' +
         '  local fsMode = fsWin and tws.fullscreen_mode or 0\n' +
-        '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
         '  local ownMode = same and w.fullscreen or 0\n' +
         '  hl.config({ dwindle = { smart_split = true, use_active_for_splits = not onActive } })\n' +
-        '  pcall(function()\n' +
+        '  local ok, err = pcall(function()\n' +
         '    if fsSel then ' + fullscreenBodyLua('fsSel', '0') + ' end\n' +
         '    ' + fullscreenBodyLua('sel', '0') + '\n' +
         '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
@@ -361,11 +385,16 @@ function tiledInsertLua(addr, targetWs, placement) {
         '      elseif "' + side + '" == "bottom" then y = a.at.y + a.size.y - 1 - inset end\n' +
         '    end\n' +
         '    hl.dispatch(hl.dsp.cursor.move({ x = math.floor(x + 0.5), y = math.floor(y + 0.5) }))\n' +
-        '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
-        '    if fsSel and fsSel ~= sel then ' + fullscreenBodyLua('fsSel', 'fsMode') + ' end\n' +
-        '    if ownMode ~= 0 then ' + fullscreenBodyLua('sel', 'ownMode') + ' end\n' +
         '  end)\n' +
+        // Cleanup. On success the un-float IS the re-tile (at the cursor). Each step re-reads
+        // state and is guarded on its own, so a failure above — or in an earlier cleanup step —
+        // never leaves the window floating, the workspace un-fullscreened, or the config changed.
+        // The window was tiled on entry, so any floating state here is ours to undo.
+        '  pcall(function() local fw = hl.get_window(sel); if fw and fw.floating then hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" })) end end)\n' +
+        '  pcall(function() if fsSel and fsSel ~= sel then ' + fullscreenBodyLua('fsSel', 'fsMode') + ' end end)\n' +
+        '  pcall(function() if ownMode ~= 0 then ' + fullscreenBodyLua('sel', 'ownMode') + ' end end)\n' +
         '  hl.config({ dwindle = { smart_split = smart, use_active_for_splits = useActive } })\n' +
+        '  ' + reportLua('tiled insert') + '\n' +
         '  ' + restoreFocusLua('prevW', 'cur') + '\n' +
         'end'
     ).replace(/\n\s*/g, ' ')
@@ -419,9 +448,10 @@ function unfullscreenLua(addr) {
     return (
         'function()\n' +
         '  local prevW, cur = hl.get_active_window(), hl.get_cursor_pos()\n' +
-        '  pcall(function()\n' +
+        '  local ok, err = pcall(function()\n' +
         fullscreenBodyLua('"address:' + addr + '"', '0') + '\n' +
         '  end)\n' +
+        reportLua('un-fullscreen') + '\n' +
         restoreFocusLua('prevW', 'cur') + '\n' +
         'end'
     ).replace(/\n\s*/g, ' ')
@@ -448,6 +478,7 @@ function floatingMoveLua(addr, targetWs, pos) {
         '    if not same then hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
         '    hl.dispatch(hl.dsp.window.move({ x = "' + x + '", y = "' + y + '", window = sel }))\n' +
         '  end)\n' +
+        '  ' + reportLua('floating move') + '\n' +
         '  ' + restoreFocusLua('prevW', 'cur') + '\n' +
         'end'
     ).replace(/\n\s*/g, ' ')

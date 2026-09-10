@@ -392,8 +392,9 @@ TestCase {
         verify(lua.indexOf('== "bottom" then y = a.at.y + a.size.y') >= 0, "bottom edge of the anchor")
         verify(lua.indexOf('hl.get_cursor_pos()') >= 0)
         verify(lua.indexOf('NaN') < 0 && lua.indexOf('undefined') < 0)
-        var order = [lua.indexOf('window.float('), lua.indexOf('window.move('),
-                     lua.indexOf('hl.get_window(anchorSel)'), lua.indexOf('cursor.move('),
+        var firstFloat = lua.indexOf('window.float(')   // the layout-guard fallback move precedes it by design
+        var order = [firstFloat, lua.indexOf('window.move(', firstFloat),
+                     lua.indexOf('hl.get_window(anchorSel)'), lua.indexOf('cursor.move(', firstFloat),
                      lua.lastIndexOf('window.float(')]
         for (var i = 1; i < order.length; i++) verify(order[i] > order[i - 1], "step order " + i)
         verify(lua.lastIndexOf('smart_split = smart') > lua.lastIndexOf('window.float('), "config restored after re-tile")
@@ -429,8 +430,9 @@ TestCase {
     // checks we sanity-check that every do/then/function( opener has a matching end.
     function luaBalanced(s) {
         var open = (s.match(/\b(do|then|function\s*\()/g) || []).length
+        var elseifs = (s.match(/\belseif\b/g) || []).length   // `elseif … then` shares the if's end
         var close = (s.match(/\bend\b/g) || []).length
-        return open === close
+        return open - elseifs === close
     }
 
     // The un-fullscreen chunk re-reads the window and only acts when its mode differs from the
@@ -473,6 +475,44 @@ TestCase {
         verify(lua.lastIndexOf('hl.dsp.focus(') > pos && lua.lastIndexOf('cursor.move(') > lua.lastIndexOf('hl.dsp.focus('),
                "focus then cursor restored after the moves")
         verify(lua.indexOf('NaN') < 0 && lua.indexOf('undefined') < 0)
+    }
+
+    // Cleanup must not be skippable: the un-float, both fullscreen re-applies and the config
+    // restore each run OUTSIDE the risky pcall and re-read state so they only undo what the
+    // chunk did. A swallowed error is reported (compositor log + on-screen notification).
+    function test_tiled_insert_lua_cleanup_is_outside_the_risky_pcall_and_reports() {
+        var lua = Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 })
+        var risky = lua.indexOf('local ok, err = pcall(function()')
+        verify(risky >= 0, "risky steps capture ok/err")
+        var riskyEnd = lua.indexOf('end)', lua.indexOf('cursor.move(', risky))
+        verify(riskyEnd > risky, "the cursor move is the last risky step")
+        var unfloat = lua.indexOf('if fw and fw.floating then hl.dispatch(hl.dsp.window.float(')
+        verify(unfloat > riskyEnd, "un-float re-reads floating state and runs after the pcall")
+        verify(lua.indexOf('pcall(function() if fsSel and fsSel ~= sel then') > riskyEnd, "workspace fullscreen re-apply is its own guarded step")
+        verify(lua.indexOf('pcall(function() if ownMode ~= 0 then') > riskyEnd, "own fullscreen re-apply is its own guarded step")
+        verify(lua.lastIndexOf('smart_split = smart') > lua.lastIndexOf('pcall(function() if ownMode'), "config restored after every guarded cleanup step")
+        verify(lua.indexOf('if not ok then') > lua.lastIndexOf('smart_split = smart'), "report after the config restore")
+        verify(lua.indexOf('print(msg)') >= 0 && lua.indexOf('hl.notification.create({ text = msg') >= 0, "reported to log and screen")
+        verify(lua.indexOf('tiled insert failed') >= 0)
+        verify(luaBalanced(lua))
+    }
+    // Non-dwindle layouts get a plain silent workspace move (or nothing, same workspace) —
+    // the cursor-based insert is a dwindle behaviour.
+    function test_tiled_insert_lua_falls_back_to_plain_move_off_dwindle() {
+        var lua = Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 })
+        var guard = lua.indexOf('local layout = hl.get_config("general.layout")')
+        verify(guard >= 0 && guard < lua.indexOf('smart_split = true'), "layout read before any dwindle config change")
+        verify(lua.indexOf('if layout ~= nil and layout ~= "dwindle" then') >= 0, "unknown key (nil) keeps the dwindle path")
+        var fb = lua.indexOf('if not same then hl.dispatch(hl.dsp.window.move({ workspace = "3", follow = false, window = sel })) end', guard)
+        verify(fb > guard && fb < lua.indexOf('smart_split = true'), "fallback is a plain silent move, before the dwindle path")
+        verify(lua.indexOf('return', fb) > fb && lua.indexOf('return', fb) < lua.indexOf('smart_split = true'), "fallback returns before the dwindle path")
+    }
+    function test_every_chunk_reports_swallowed_errors() {
+        verify(Logic.unfullscreenLua("0xabc").indexOf('un-fullscreen failed') >= 0)
+        verify(Logic.floatingMoveLua("0xabc", 2, { x: 1, y: 2 }).indexOf('floating move failed') >= 0)
+        var r = Logic.reportLua('thing')
+        verify(r.indexOf('if not ok then') === 0 && r.indexOf('tostring(err)') >= 0)
+        verify(r.indexOf('pcall(function() hl.notification.create(') >= 0, "notification API itself guarded (older Hyprland)")
     }
 
     // ---- recoverSlot: a fullscreen window's tiled slot is what the OTHER tiled windows leave
