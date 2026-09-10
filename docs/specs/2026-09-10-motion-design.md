@@ -46,9 +46,12 @@ work: one motion vocabulary applied to open/close, selection, hover, drag and re
   so the shell animates instead of the compositor. Document the same rule for `omyview`:
   `hl.layer_rule({ match = { namespace = "omyview" }, no_anim = true, animation = "none" })`.
   Without it, open/close double-animate (compositor fade + ours).
-- **Behaviors on tile x/y vs drag.** The drag sets `x/y` directly through `drag.target`; a
-  `Behavior on x` would fight it. Gate the Behaviors with `enabled: !tile.dragging` and re-enable
-  after the release rebind, so the settle animates but the drag never does.
+- **Tile glide vs drag.** The drag sets `x/y` directly through `drag.target`; a `Behavior on x`
+  would fight it, and gating it on `!dragging` is not enough (disabling a Behavior does not stop
+  a transition in flight, and the C++ drag write leaves the QML binding installed, so the glide
+  re-asserts on its next tick). So the glide runs on separate `targetX`/`targetY` properties;
+  `beginGrab` detaches `x/y` with a plain write and the drag owns them; release parks the
+  targets at the drop point and rebinds them to the model — that rebind is the settle.
 - **Boxes must be reconciled, not recreated.** Boxes and badges are `Repeater`s over the
   `root.boxes` array today, so every rebuild recreates them at their new position; a tile
   gliding into a box that has already jumped looks wrong. Boxes become an address-keyed
