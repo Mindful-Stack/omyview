@@ -39,13 +39,16 @@ EOF
 # than this process's stderr -- QT_FORCE_STDERR_LOGGING pins it back to stderr. Only what
 # follows "CHUNK " is kept (qml's own "qml: " prefix and other noise are dropped). Chunks are
 # single-line by construction, so one line per chunk is sound.
-QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 "$QML_BIN" "$fixture/dump.qml" 2>&1 \
-  | sed -n 's/^.*CHUNK //p' > "$fixture/chunks.txt"
+# The raw output is kept and shown on failure: a runtime that cannot load QtQuick, or exits
+# non-zero, must be diagnosable from the CI log, not swallowed by the pipe.
+qml_status=0
+QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 "$QML_BIN" "$fixture/dump.qml" > "$fixture/qml.out" 2>&1 || qml_status=$?
+sed -n 's/^.*CHUNK //p' "$fixture/qml.out" > "$fixture/chunks.txt"
 
 count=$(grep -c . "$fixture/chunks.txt" || true)
-if [ "$count" -lt 4 ]; then
-  echo "FAIL: expected 4 generated Lua chunks, got $count (silent/empty output must not pass)" >&2
-  cat "$fixture/chunks.txt" >&2
+if [ "$qml_status" -ne 0 ] || [ "$count" -lt 4 ]; then
+  echo "FAIL: $QML_BIN exited $qml_status; expected 4 generated Lua chunks, got $count (silent/empty output must not pass)" >&2
+  echo "--- raw qml output:" >&2; cat "$fixture/qml.out" >&2
   exit 1
 fi
 
