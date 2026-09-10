@@ -57,6 +57,7 @@ case("tiled insert: cursor move throws → window is NOT left floating, config r
   hl.__fail_on = "cursor.move"; hl.__fail_nth = 1   -- the placement move; the final cursor restore must still work
   run("TILED_INSERT", hl)
   eq(hl.__windows["0xabc"].floating, false, "cleanup un-floated it")
+  eq(hl.__seen["window.float"], 2, "float, then the cleanup un-float (so 'ends tiled' is not vacuous)")
   eq(hl.__config["dwindle.smart_split"], false, "smart_split restored")
   eq(#hl.__notifications, 1, "one notification")
   assert(hl.__notifications[1].text:find("tiled insert failed", 1, true), "notification names the operation")
@@ -92,7 +93,7 @@ case("tiled insert on a non-dwindle layout → plain silent move only", function
   run("TILED_INSERT", hl)
   seq(hl, { "window.move", "cursor.move" })
   eq(hl.__log[1].args.workspace, "3"); eq(hl.__log[1].args.follow, false)
-  eq(hl.__config["dwindle.smart_split"], false, "dwindle config never touched")
+  eq(hl.__seen["window.float"], nil, "dwindle path never entered")
 end)
 case("tiled insert: unknown layout key (nil) keeps the dwindle path", function()
   local hl = Mock.new({ windows = tiledWindows() })
