@@ -135,12 +135,15 @@ Optional user settings live in `~/.config/omarchy/omyview.json` (watched; edits 
 ```json
 {
   "scrim": true,
-  "hint": true
+  "hint": true,
+  "motion": "auto"
 }
 ```
 
 - `scrim` — dim the desktop behind the picker while it is open (default `true`).
 - `hint` — show the key hints under the workspace grid (default `true`).
+- `motion` — `"auto"` (default) animates only when Hyprland's `animations:enabled` is on;
+  `"full"` always animates; `"off"` never does (every duration is 0).
 
 ### Blurred scrim (optional, Hyprland side)
 
