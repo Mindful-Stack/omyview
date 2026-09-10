@@ -22,11 +22,29 @@ Item {
     readonly property bool wantCapture: handle !== null && capMode !== "icon"
     readonly property string iconUrl: Quickshell.iconPath(String(cls).toLowerCase(), true)
 
+    // Drag ghost: while in transit the tile shrinks around the grabbed point (so that point stays
+    // under the pointer and the ghost never hides the drop highlight) and turns translucent.
+    // The pointer, not the ghost, decides where a tiled window lands.
+    property real grabX: width / 2         // grab point in tile coords, set by Overview at press
+    property real grabY: height / 2
+    readonly property real dragScale: 0.6
+    readonly property real dragOpacity: 0.6
+    readonly property alias ghostScale: ghost.xScale
+
     HoverHandler { id: hh; enabled: !tile.dragging }
     scale: dragging ? 1 : (hh.hovered ? 1.05 : 0.95)
     transformOrigin: Item.Center
     z: dragging ? 99999 : (hh.hovered ? 10 : 0)
+    opacity: dragging ? dragOpacity : 1
     Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
+    Behavior on opacity { NumberAnimation { duration: 100 } }
+    transform: Scale {
+        id: ghost
+        origin.x: tile.grabX; origin.y: tile.grabY
+        xScale: tile.dragging ? tile.dragScale : 1
+        yScale: xScale
+        Behavior on xScale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
+    }
 
     ClippingRectangle {
         anchors.fill: parent

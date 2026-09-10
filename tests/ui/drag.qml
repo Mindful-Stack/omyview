@@ -140,10 +140,12 @@ TestCase {
         mouseMove(tc,p.x+12,p.y+2,20)
         mouseMove(tc,edge.x,edge.y,20)
         var before=view.testFlick.contentY
-        var visual=t.mapToItem(tc,0,0)
+        // The grab point is the ghost's scale origin, so it is invariant under the in-transit
+        // shrink animation and is exactly the point that must stay under the pointer.
+        var visual=t.mapToItem(tc,t.grabX,t.grabY)
         wait(100)
         verify(view.testFlick.contentY > before, "Holding near the edge must scroll")
-        var after=t.mapToItem(tc,0,0)
+        var after=t.mapToItem(tc,t.grabX,t.grabY)
         verify(Math.abs(visual.y-after.y)<1, "Scrolling must keep the tile under the pointer")
         view.close()
         mouseRelease(tc,edge.x,edge.y,Qt.LeftButton)
@@ -247,6 +249,37 @@ TestCase {
         dragOntoTarget(1)
         compare(view.compositor.commands.length,0)
         compare(tile().x,before)
+    }
+    function test_ghost_shrinks_and_fades_while_dragging_and_restores() {
+        var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        mouseMove(tc,p.x+40,p.y+20,20)
+        wait(200)
+        fuzzyCompare(t.opacity,0.6,0.02,"translucent in transit")
+        fuzzyCompare(t.ghostScale,0.6,0.02,"shrunk in transit")
+        mouseRelease(tc,p.x+40,p.y+20,Qt.LeftButton)
+        wait(200)
+        fuzzyCompare(t.opacity,1,0.02,"opaque after release")
+        fuzzyCompare(t.ghostScale,1,0.02,"full size after release")
+    }
+    // The pointer picks the target and side, not the ghost's centre: grab the tile at its
+    // right edge (so the ghost's centre trails well left of the pointer, further still by the
+    // drag threshold) and point at the target's RIGHT quarter — centre-based targeting would
+    // say "left".
+    function test_pointer_not_ghost_centre_picks_target_and_side() {
+        addTarget(1)
+        var target=view.testModel.get(1), t=tile()
+        var g=t.mapToItem(tc,t.width-4,4)
+        mousePress(tc,g.x,g.y,Qt.LeftButton)
+        mouseMove(tc,g.x+12,g.y+2,20)
+        var goal=view.testCanvas.mapToItem(tc,target.wx+target.ww*0.9,target.wy+target.wh/2)
+        mouseMove(tc,goal.x,goal.y,20)
+        compare(view.dropTargetAddress,"0x456")
+        compare(view.dropTargetSide,"right")
+        verify(t.x+t.width/2 < target.wx+target.ww/2, "ghost centre is on the target's left half")
+        view.close()
+        mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
     }
     // A drag that never leaves the window's own slot is a no-op on release, so it must not
     // preview an insertion into another tile either: preview and release share one check.

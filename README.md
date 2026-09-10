@@ -230,3 +230,8 @@ the window is re-tiled as a split of the tile you drop it on, on the side you dr
 it re-organises the layout. This works across workspaces, including hidden ones, without
 changing the active workspace, and an empty destination just fills. Grouped and fullscreen
 windows are not re-tiled. Edge scrolling helps reach workspaces below the viewport.
+
+While in transit the dragged tile is a ghost: it shrinks to 60% around the point you grabbed
+and turns translucent, so the drop highlight stays visible. The **pointer** decides where a
+tiled window goes (as the cursor does in a native drag); a floating window lands so the grabbed
+point ends up under the pointer.

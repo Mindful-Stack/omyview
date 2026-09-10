@@ -180,6 +180,14 @@ fullscreen windows do nothing (grouped/fullscreen cross-workspace drops still tr
 none of these previews an insertion. The tile holds the drop point until fresh geometry
 differs from the pre-drop one.
 
+**Drag ghost and pointer targeting.** In transit the tile scales to 0.6 around the grab point
+(a `Scale` transform with its origin at the press position, so that point stays under the
+pointer and the ghost never covers the highlight) at 0.6 opacity, both animated. Tiled
+targeting — workspace hit, anchor tile and side — uses the pointer's canvas position (the
+edge-scroll viewport point plus scroll offset), matching the native drag where the cursor
+decides; the ghost's geometry is irrelevant to it. Floating placement still uses the ghost's
+unscaled top-left, i.e. "the point you grabbed lands under the pointer".
+
 Verified with real Quickshell on a nested Lua Hyprland: a lower window dropped at the upper
 window's bottom edge of a vertical stack stays below it (the anchor doubles in height when the
 window detaches), insert left of / above the hovered window on the active workspace, and right

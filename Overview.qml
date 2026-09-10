@@ -156,15 +156,16 @@ Item {
             { anchor: plan.anchor, side: plan.side, x: fallback.x, y: fallback.y }))
         return true
     }
-    function submitDrop(addr, targetWs, dropX, dropY) {
+    function submitDrop(addr, targetWs, dropX, dropY, px, py) {
         var box = boxForWs(targetWs), mon = box ? _monByName[box.monitorName] : null
         var win = _windowByAddress[addr]
         if (!box || !mon || !win) return
         var sourceWs = win.workspaceId // model.wsid may still be optimistic
         var tile = tileRectFor(addr)
         if (!win.floating && !win.fullscreen && !win.grouped && tile) {
-            if (startTiledInsert(addr, win, targetWs, box, mon,
-                                 dropX + tile.w / 2, dropY + tile.h / 2, dropX, dropY)) {
+            var cx = px === undefined ? dropX + tile.w / 2 : px
+            var cy = py === undefined ? dropY + tile.h / 2 : py
+            if (startTiledInsert(addr, win, targetWs, box, mon, cx, cy, dropX, dropY)) {
                 scheduleRebuild()
                 reconcileTimer.restart()
             }
@@ -232,9 +233,14 @@ Item {
         }
         if (!Object.keys(pendingMoves).length) reconcileTimer.stop()
     }
+    // Pointer position in canvas coordinates during a drag (viewport point + scroll offset).
+    function dragPointer() {
+        return { x: dragViewportX + flick.contentX, y: dragViewportY + flick.contentY }
+    }
     function updateDropTarget() {
         if (!dragTile) { dropTargetWs = -1; dropTargetAddress = ""; dropTargetSide = ""; return }
-        var cx = dragTile.x + dragTile.width / 2, cy = dragTile.y + dragTile.height / 2
+        // The pointer decides (as the cursor does in a native drag); the tile is only a ghost.
+        var p = dragPointer(), cx = p.x, cy = p.y
         var ws = Logic.hitWorkspace(boxes, cx, cy)
         dropTargetWs = ws === null ? -1 : ws
         var win = _windowByAddress[draggingAddress]
@@ -584,6 +590,7 @@ Item {
                                     root.dragTile = windowTile
                                     moved = false
                                     drag.target = windowTile
+                                    windowTile.grabX = m.x; windowTile.grabY = m.y   // ghost shrinks around the grab point
                                     var p = mapToItem(flick, m.x, m.y)
                                     root.dragViewportX = p.x; root.dragViewportY = p.y
                                     root.updateDropTarget()
@@ -607,8 +614,9 @@ Item {
                                     root.updateDropTarget()
                                     var targetWs = root.dropTargetWs
                                     var dropX = windowTile.x, dropY = windowTile.y
+                                    var ptr = root.dragPointer()
                                     if (wasMoved && targetWs >= 0)
-                                        root.submitDrop(addr, targetWs, dropX, dropY)
+                                        root.submitDrop(addr, targetWs, dropX, dropY, ptr.x, ptr.y)
                                     root.endDrag()
                                     if (!wasMoved) {
                                         Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })')
