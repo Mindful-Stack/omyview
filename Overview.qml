@@ -379,6 +379,36 @@ Item {
         }
     }
 
+    // Roles differ across two rows only by value: compare before `set`, because ListModel.set
+    // emits a change even for identical values, and every binding (and Behavior) downstream
+    // would re-evaluate on each 60 ms settle tick.
+    function rowDiffers(cur, next) {
+        for (var k in next) if (cur[k] !== next[k]) return true
+        return false
+    }
+    function boxIndex(workspaceId) {
+        for (var i = 0; i < boxesModel.count; i++)
+            if (boxesModel.get(i).workspaceId === workspaceId) return i
+        return -1
+    }
+    // Reconcile the workspace boxes in place, keyed by workspace id (drag-safe by nature: a
+    // box never owns a pointer grab). Roles are prefixed so `model.bx` cannot be confused
+    // with the delegate's own x.
+    function applyBoxes(boxes) {
+        var seen = {}
+        for (var i = 0; i < boxes.length; i++) {
+            var b = boxes[i]
+            var row = { workspaceId: b.workspaceId, bx: b.x, by: b.y, bw: b.w, bh: b.h,
+                        focused: !!b.focused, occupied: !!b.occupied }
+            seen[b.workspaceId] = true
+            var idx = boxIndex(b.workspaceId)
+            if (idx < 0) boxesModel.append(row)
+            else if (rowDiffers(boxesModel.get(idx), row)) boxesModel.set(idx, row)
+        }
+        for (var r = boxesModel.count - 1; r >= 0; r--)
+            if (!seen[boxesModel.get(r).workspaceId]) boxesModel.remove(r)
+    }
+
     property var _clsByAddress: ({})
     property var _titleByAddress: ({})
     property var _floatingByAddress: ({})
@@ -417,6 +447,7 @@ Item {
         var res = Logic.layout(input)
         root.boxes = res.boxes
         root.groups = res.groups
+        applyBoxes(res.boxes)
         canvas.implicitWidth = res.canvasSize.w
         canvas.implicitHeight = res.canvasSize.h
         applyTiles(res.tiles)
@@ -535,6 +566,7 @@ Item {
         onRunningChanged: if (!running) refreshOwed = false
     }
     ListModel { id: tilesModel }
+    ListModel { id: boxesModel }
 
     // Window/workspace changes while open: refresh + settle (never an immediate stale rebuild).
     Connections {
@@ -636,35 +668,35 @@ Item {
 
                     // boxes layer
                     Repeater {
-                        model: panel.visible ? root.boxes : []
+                        model: boxesModel
                         Rectangle {
-                            required property var modelData
+                            id: boxItem
+                            required property var model
                             objectName: "wsBox"
-                            readonly property bool isSel: modelData.workspaceId === root.selectedId
                             readonly property bool isDrop: root.draggingAddress !== "" &&
-                                                           modelData.workspaceId === root.dropTargetWs
-                            x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h
+                                                           model.workspaceId === root.dropTargetWs
+                            x: model.bx; y: model.by; width: model.bw; height: model.bh
                             radius: root.boxRadius
                             // a well sunk into the card; no outline
                             color: isDrop ? root.dropWellColor
-                                 : modelData.focused ? root.selBackground
-                                 : modelData.occupied ? root.wellColor : root.emptyWellColor
+                                 : model.focused ? root.selBackground
+                                 : model.occupied ? root.wellColor : root.emptyWellColor
 
                             // big low-contrast numeral, only where nothing would hide it
                             Text {
                                 objectName: "wsNumeral"
                                 anchors.centerIn: parent
-                                visible: !modelData.occupied
-                                text: root.wsLabel(modelData.workspaceId)
+                                visible: !boxItem.model.occupied
+                                text: root.wsLabel(boxItem.model.workspaceId)
                                 color: root.foreground
                                 opacity: 0.10
-                                font.pixelSize: Math.round(modelData.h * 0.45)
+                                font.pixelSize: Math.round(boxItem.model.bh * 0.45)
                                 font.weight: Font.DemiBold
                             }
                             MouseArea {   // click empty area of a workspace => jump
                                 anchors.fill: parent
                                 enabled: root.opened
-                                onClicked: root.jump(modelData.workspaceId)
+                                onClicked: root.jump(boxItem.model.workspaceId)
                             }
                         }
                     }
@@ -783,21 +815,22 @@ Item {
                     // what the previews contain. One chip per box, top-left corner. Focused
                     // workspace = accent chip. No mouse handling, so clicks fall through.
                     Repeater {
-                        model: panel.visible ? root.boxes : []
+                        model: boxesModel
                         Rectangle {
-                            required property var modelData
+                            id: badge
+                            required property var model
                             objectName: "wsBadge"
-                            x: modelData.x + 6; y: modelData.y + 6
+                            x: model.bx + 6; y: model.by + 6
                             z: 40   // above resting/hovered tiles, below the selection frame
                             height: badgeText.implicitHeight + 6
                             width: Math.max(height, badgeText.implicitWidth + 10)
                             radius: 5
-                            color: modelData.focused ? root.accent : root.badgeColor
+                            color: model.focused ? root.accent : root.badgeColor
                             Text {
                                 id: badgeText
                                 anchors.centerIn: parent
-                                text: root.wsLabel(modelData.workspaceId)
-                                color: modelData.focused ? root.background : root.foreground
+                                text: root.wsLabel(badge.model.workspaceId)
+                                color: badge.model.focused ? root.background : root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: root.labelSize
                                 font.weight: Font.DemiBold

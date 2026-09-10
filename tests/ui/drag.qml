@@ -799,4 +799,31 @@ TestCase {
         wait(250)
         compare(view.compositor.commands.length, 0, "no jump dispatched during the exit fade")
     }
+    // ---- boxes model ----
+    function boxItem(ws) {
+        var c = view.testCanvas.children
+        for (var i = 0; i < c.length; i++)
+            if (c[i].objectName === "wsBox" && c[i].model && c[i].model.workspaceId === ws) return c[i]
+        fail("box " + ws + " not found")
+    }
+    // Boxes are reconciled in place like tiles: an identical rebuild keeps the delegate
+    // instance, a new workspace adds one, a vanished workspace removes one and the survivors
+    // move into the freed column.
+    function test_box_delegates_are_reconciled_not_recreated() {
+        var b2 = boxItem(2)
+        view.rebuild()
+        compare(boxItem(2), b2, "identical rebuild keeps the instance")
+        var ws = view.compositor.workspaces.values
+        ws.push({id:3, monitor: ws[0].monitor, toplevels:{values:[]}}); view.rebuild()
+        compare(canvasItems("wsBox").length, 3)
+        compare(canvasItems("wsBadge").length, 3, "badges follow the same model")
+        compare(boxItem(2), b2, "adding a workspace keeps the others")
+        var b3 = boxItem(3)
+        compare(b3.x, view.boxes[2].x)
+        ws.splice(1, 1); view.rebuild()           // workspace 2 disappears
+        compare(canvasItems("wsBox").length, 2)
+        compare(boxItem(3), b3, "the survivor is the same instance")
+        compare(b3.x, view.boxes[1].x, "…in the freed column")
+        compare(b3.width, view.boxes[1].w)
+    }
 }
