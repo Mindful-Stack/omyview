@@ -128,10 +128,6 @@ Item {
         interval: 120; repeat: true
         onTriggered: root._reconcileStep()
     }
-    function _movePosition(addr, pos) {
-        Hyprland.dispatch('hl.dsp.window.move({ x = "' + pos.x + '", y = "' + pos.y +
-                          '", window = "address:' + addr + '" })')
-    }
     function setTileRoles(addr, roles) {
         for (var i = 0; i < tilesModel.count; i++)
             if (tilesModel.get(i).address === addr) { tilesModel.set(i, roles); return }
@@ -233,9 +229,7 @@ Item {
         }
         var pos = win.floating ? Logic.dropToWindowPos(dropX, dropY, box, mon, params, win) : null
         if (targetWs === sourceWs && !pos) return // grouped tiled: snap back in place
-        var pending = { workspaceId: targetWs, pos: pos,
-                        positioning: targetWs === sourceWs,
-                        deadline: Date.now() + 1800 }
+        var pending = { workspaceId: targetWs, pos: pos, deadline: Date.now() + 1800 }
         pendingMoves[addr] = pending
         // Publish the destination before restoring x/y bindings. Keep it until the
         // compositor acknowledges this move; refreshToplevels is asynchronous.
@@ -251,10 +245,11 @@ Item {
                                 wh: rect ? rect.h : tilesModel.get(i).wh, wsid: targetWs })
             break
         }
-        if (targetWs !== sourceWs) {
-            Hyprland.dispatch('hl.dsp.window.move({ workspace = ' + targetWs +
-                              ', follow = false, window = "address:' + addr + '" })')
-        } else _movePosition(addr, pos)
+        // Floating: transfer + exact position in one compositor-side chunk (nothing here has to
+        // outlive the overlay to finish it). Grouped tiled windows only change workspace.
+        if (pos) Hyprland.dispatch(Logic.floatingMoveLua(addr, targetWs, pos))
+        else Hyprland.dispatch('hl.dsp.window.move({ workspace = ' + targetWs +
+                               ', follow = false, window = "address:' + addr + '" })')
         scheduleRebuild()
         reconcileTimer.restart()
     }
@@ -285,13 +280,6 @@ Item {
                                   // a vanished anchor acknowledges: the insert is moot
                 if (ownSame && anchorSame) continue
                 delete pendingMoves[addr]
-                continue
-            }
-            if (pending.pos && !pending.positioning) {
-                // Wait for workspace transfer before positioning: transfer itself can
-                // relocate a floating window, especially across different monitors.
-                pending.positioning = true
-                _movePosition(addr, pending.pos)
                 continue
             }
             if (!pending.pos || (Math.abs(win.ax - pending.pos.x) <= 1 &&
@@ -450,7 +438,8 @@ Item {
     }
     function close() {
         endDrag()
-        // A dispatched workspace move still needs its positioning/ack phase when closed.
+        // Every dispatched operation is atomic in the compositor; the reconcile timer only
+        // clears optimistic state.
         settleTimer.stop()
         opened = false
     }

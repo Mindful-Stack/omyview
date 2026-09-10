@@ -456,6 +456,25 @@ TestCase {
         verify(body.indexOf('"maximized" or "fullscreen"') >= 0, "mode name derived from target/current mode")
     }
 
+    // A floating drop is ONE chunk: (workspace transfer, skipped when already there) then the
+    // exact-position move, in that order, inside the compositor — so nothing depends on the
+    // overlay staying loaded to finish the job. Focus/cursor restore as in every other chunk.
+    function test_floating_move_lua_transfers_then_positions_in_one_chunk() {
+        var lua = Logic.floatingMoveLua("0xabc", 3, { x: 200.4, y: 1600.6 })
+        verify(lua.indexOf('\n') < 0, "single line")
+        verify(lua.indexOf('function()') === 0)
+        verify(lua.indexOf('local sel = "address:0xabc"') >= 0)
+        verify(lua.indexOf('if not w or not w.floating then return end') >= 0, "tiled windows are not moved by this chunk")
+        var xfer = lua.indexOf('workspace = "3", follow = false'), pos = lua.indexOf('x = "200", y = "1601"')
+        verify(xfer >= 0, "workspace transfer present"); verify(pos >= 0, "rounded exact position present")
+        verify(xfer < pos, "transfer before positioning")
+        verify(lua.indexOf('w.workspace.id == 3') >= 0, "transfer is skipped when already on the workspace")
+        verify(lua.indexOf('pcall(function()') >= 0 && luaBalanced(lua), "guarded and balanced")
+        verify(lua.lastIndexOf('hl.dsp.focus(') > pos && lua.lastIndexOf('cursor.move(') > lua.lastIndexOf('hl.dsp.focus('),
+               "focus then cursor restored after the moves")
+        verify(lua.indexOf('NaN') < 0 && lua.indexOf('undefined') < 0)
+    }
+
     // ---- recoverSlot: a fullscreen window's tiled slot is what the OTHER tiled windows leave
     // uncovered. usableR is the usable rect in local coords (2048x1254 = eDP-1 minus the 26px bar).
     readonly property var usableR: ({ x: 0, y: 0, w: 2048, h: 1254 })

@@ -91,23 +91,25 @@ TestCase {
         compare(tile().x,before)
         verify(view.pendingMoves[client.address] === undefined)
     }
-    function test_cross_workspace_waits_before_positioning() {
+    function test_cross_workspace_floating_move_is_one_dispatch() {
         client.floating = true; view.rebuild()
         dragBy(view.boxes[1].x-view.boxes[0].x,20)
-        compare(view.compositor.commands.length,1)
-        verify(view.compositor.commands[0].indexOf('workspace = 2') >= 0)
+        compare(view.compositor.commands.length,1,"transfer and positioning are one atomic chunk")
+        var cmd=view.compositor.commands[0]
+        verify(cmd.indexOf('workspace = "2"')>=0, "transfer to workspace 2")
+        verify(cmd.indexOf('x = "')>=0, "position is in the same chunk")
+        verify(cmd.indexOf('workspace = "2"') < cmd.indexOf('x = "'), "transfer before positioning")
         var dropped = tile().x
-        view.rebuild(); compare(tile().x,dropped)
+        view.rebuild(); compare(tile().x,dropped,"stale geometry must not undo the optimistic drop")
         var ws = view.compositor.workspaces.values
         ws[0].toplevels.values=[]
         ws[1].toplevels.values=[{lastIpcObject:client}]
         view.rebuild()
-        compare(view.compositor.commands.length,2)
-        verify(view.compositor.commands[1].indexOf('x = "') >= 0)
+        compare(view.compositor.commands.length,1,"no second phase once the transfer lands")
         compare(tile().x,dropped)
         var p=view.pendingMoves[client.address].pos
         client.at=[p.x,p.y]; view.rebuild()
-        verify(view.pendingMoves[client.address] === undefined)
+        verify(view.pendingMoves[client.address] === undefined, "acknowledged by geometry")
         compare(view.testModel.get(0).wsid,2)
     }
     function test_outside_drop_does_not_move_floating_window() {
@@ -160,7 +162,8 @@ TestCase {
         // The tile may already show workspace 2 while the real transfer is pending.
         view.testModel.setProperty(0,"wsid",2)
         view.submitDrop(client.address,2,b.x+30,b.y+30)
-        verify(view.compositor.commands[0].indexOf('workspace = 2') >= 0)
+        verify(view.compositor.commands[0].indexOf('workspace = "2", follow = false') >= 0,
+               "a transfer is dispatched because the real source is workspace 1")
     }
 
     function test_app_class_refreshes_existing_tile() {

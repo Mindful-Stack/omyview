@@ -427,6 +427,32 @@ function unfullscreenLua(addr) {
     ).replace(/\n\s*/g, ' ')
 }
 
+// One atomic chunk that moves the floating window `addr` to workspace `targetWs` (skipped when
+// it is already there) and then to the exact global position `pos` — in that order, because a
+// workspace transfer relocates a floating window (especially across monitors), so positioning
+// must come after it. Both happen inside the compositor before the next frame, so nothing in
+// the overlay has to survive to finish the move: an unloaded overlay loses only its optimistic
+// tile, never the operation. Tiled windows return early (they take the tiled-insert chunk).
+// The position payload keeps the exact-coordinate string form the old two-phase move used.
+function floatingMoveLua(addr, targetWs, pos) {
+    var ws = String(parseInt(targetWs, 10))
+    var x = Math.round(pos.x), y = Math.round(pos.y)
+    return (
+        'function()\n' +
+        '  local sel = "address:' + addr + '"\n' +
+        '  local w = hl.get_window(sel)\n' +
+        '  if not w or not w.floating then return end\n' +
+        '  local prevW, cur = hl.get_active_window(), hl.get_cursor_pos()\n' +
+        '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
+        '  local ok, err = pcall(function()\n' +
+        '    if not same then hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
+        '    hl.dispatch(hl.dsp.window.move({ x = "' + x + '", y = "' + y + '", window = sel }))\n' +
+        '  end)\n' +
+        '  ' + restoreFocusLua('prevW', 'cur') + '\n' +
+        'end'
+    ).replace(/\n\s*/g, ' ')
+}
+
 function _center(b) { return { x: b.x + b.w / 2, y: b.y + b.h / 2 } }
 
 // Spatial arrow-key navigation over the wrapped grid. dir: "left"|"right"|"up"|"down".
