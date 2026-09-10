@@ -450,30 +450,31 @@ Item {
 
     // Ask Hyprland for fresh client data, then rebuild every 60ms until five quiet ticks have
     // passed, so a window opened while the overview is visible appears once its async geometry
-    // arrives — a single immediate rebuild would read stale/empty `lastIpcObject` geometry. A
-    // burst of events extends the settle window (the tick counter resets) but never restarts
-    // the running timer, so a stream of events faster than the interval still rebuilds every
-    // tick; the refresh request is issued at most once per tick.
+    // arrives — a single immediate rebuild would read stale/empty `lastIpcObject` geometry.
+    // The first event of a burst refreshes at once (the data has a tick to land); events while
+    // the timer runs extend the settle window and owe one refresh, paid on the next tick — so
+    // every event is followed by a refresh, a stream faster than the interval still rebuilds
+    // every tick, and there is at most one refresh per tick instead of one per event.
+    function requestRefresh() {
+        if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
+        if (typeof Hyprland.refreshWorkspaces === "function") Hyprland.refreshWorkspaces()
+    }
     function scheduleRebuild() {
-        if (!settleTimer.refreshed) {
-            settleTimer.refreshed = true
-            if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
-            if (typeof Hyprland.refreshWorkspaces === "function") Hyprland.refreshWorkspaces()
-        }
         settleTimer.ticks = 0
-        if (!settleTimer.running) settleTimer.start()
+        if (settleTimer.running) settleTimer.refreshOwed = true
+        else { requestRefresh(); settleTimer.start() }
     }
     Timer {
         id: settleTimer
         interval: 60; repeat: true
         property int ticks: 0
-        property bool refreshed: false   // a refresh was requested since the last tick
+        property bool refreshOwed: false   // an event arrived after the last refresh request
         onTriggered: {
-            refreshed = false
+            if (refreshOwed) { refreshOwed = false; root.requestRefresh() }
             if (root.opened) root.rebuild()
             if (++ticks >= 5) stop()
         }
-        onRunningChanged: if (!running) refreshed = false
+        onRunningChanged: if (!running) refreshOwed = false
     }
     ListModel { id: tilesModel }
 

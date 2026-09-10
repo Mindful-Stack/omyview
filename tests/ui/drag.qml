@@ -653,6 +653,18 @@ TestCase {
         mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
     }
 
+    // Coalescing must never drop the refresh for an event that arrives after the last refresh
+    // was requested: that request cannot contain the change the new event announces.
+    function test_event_after_a_refresh_gets_its_own_refresh_within_a_tick() {
+        wait(400)                         // open()'s settle window has ended
+        view.compositor.refreshes = 0
+        view.compositor.rawEvent()        // leading edge: refresh at once
+        compare(view.compositor.refreshes, 1)
+        wait(10)
+        view.compositor.rawEvent()        // mid-stream: a second refresh is owed
+        wait(100)
+        compare(view.compositor.refreshes, 2, "the later event must trigger another refresh")
+    }
     // Raw compositor events faster than the settle interval must not starve the rebuild, and
     // must not fan out into one refresh request per event.
     function test_event_flood_still_rebuilds_and_throttles_refresh() {
