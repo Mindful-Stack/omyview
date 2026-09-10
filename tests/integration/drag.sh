@@ -116,37 +116,69 @@ wait_pending() {
         [[ "$(ipc pending)" == '{}' ]] && return
         sleep 0.1
     done
-    echo 'FAIL: swap not acknowledged'; cat "$tmp/qs.log"; exit 1
+    echo 'FAIL: drop not acknowledged'; cat "$tmp/qs.log"; exit 1
 }
+box() { hc clients -j | jq -r --arg a "$1" '.[]|select(.address==$a)|"\(.at[0]) \(.at[1]) \(.size[0]) \(.size[1]) \(.workspace.id)"'; }
+dump() { hc clients -j | jq '[.[]|{address,at,size,workspace:.workspace.id}]'; cat "$tmp/qs.log"; }
+# Native-drag semantics: a tiled drop re-tiles the window as a split of the hovered window on
+# the hovered side. With three windows, drop W on the LEFT edge of `third` (vertical centre):
+# W must end up left of `third`, same row/height, nobody swapped.
 second=$(spawn_window)
 third=$(spawn_window)
 sleep 0.4
-first_before=$(geometry "$addr")
-third_before=$(geometry "$third")
+# Reviewer's case (PR #2): with two vertically stacked windows, dropping the LOWER one near the
+# UPPER one's bottom edge previewed "bottom" but inserted it above. Detaching the lower window
+# first doubles the upper one's height, so a point taken from the pre-drop layout ends up in the
+# upper half of the expanded anchor. The placement must come from the anchor's geometry after
+# detachment. First build the stack with the tool itself (drop `third` on `second`'s bottom
+# edge, whatever dwindle's initial arrangement), then repeat the same drop on the stack.
+stack_below() {   # $1 upper, $2 lower: drop `lower` at `upper`'s bottom edge and assert it stays below
+    local ux uy uw uh lx ly lw lh lws
+    read -r ux uy uw uh _ < <(box "$1")
+    ipc dropPoint "$2" 1 $((ux + uw / 2)) $((uy + uh - 8))
+    wait_pending
+    read -r ux uy uw uh _ < <(box "$1"); read -r lx ly lw lh lws < <(box "$2")
+    [[ "$lws" == 1 && "$lx" == "$ux" && "$lw" == "$uw" && "$ly" -ge $((uy + uh)) ]]
+}
+stack_below "$second" "$third" || { echo "FAIL: could not stack third below second"; dump; exit 1; }
+stack_below "$second" "$third" || {
+    echo "FAIL: lower window dropped at the upper window's bottom edge was not kept below it"; dump; exit 1; }
+echo 'PASS: production tiled drop places on the previewed side after detachment re-lays out the workspace'
+read -r tx ty tw th _ < <(box "$third")
 pointer_before=$(hc cursorpos -j | jq -c .)
-ipc dropOn "$addr" "$third"
+ipc dropPoint "$addr" 1 $((tx + 8)) $((ty + th / 2))
 wait_pending
-[[ "$(geometry "$addr")" == "$third_before" ]]
-[[ "$(geometry "$third")" == "$first_before" ]]
+read -r wx wy ww wh wws < <(box "$addr"); read -r tx2 ty2 tw2 th2 _ < <(box "$third")
+[[ "$wws" == 1 && "$wy" == "$ty2" && "$wh" == "$th2" && $((wx + ww)) -le "$tx2" ]] || {
+    echo "FAIL: W not inserted left of the hovered window"; dump; exit 1; }
 [[ "$(hc activeworkspace -j | jq .id)" == 1 ]]
 [[ "$(hc cursorpos -j | jq -c .)" == "$pointer_before" ]]
-echo 'PASS: production tiled swap exchanges positions/sizes and preserves workspace/pointer'
-# Two destination windows: choose the first, while default insertion follows the second.
+echo 'PASS: production tiled drop re-tiles left of the hovered window (native drag semantics)'
+# Drop W on the TOP edge of `second` → W above `second`, same column/width (vertical split).
+read -r tx ty tw th _ < <(box "$second")
+ipc dropPoint "$addr" 1 $((tx + tw / 2)) $((ty + 8))
+wait_pending
+read -r wx wy ww wh wws < <(box "$addr"); read -r tx2 ty2 tw2 th2 _ < <(box "$second")
+[[ "$wws" == 1 && "$wx" == "$tx2" && "$ww" == "$tw2" && $((wy + wh)) -le "$ty2" ]] || {
+    echo "FAIL: W not inserted above the hovered window"; dump; exit 1; }
+echo 'PASS: production tiled drop re-tiles above the hovered window'
+# Hidden workspace 3 with two windows: drop W on the RIGHT edge of the first → inserted right of
+# it, on the hidden workspace, active workspace and pointer untouched, config restored.
 hc dispatch 'hl.dsp.focus({workspace="3"})' >/dev/null
 target=$(spawn_window)
 last_target=$(spawn_window)
 hc dispatch 'hl.dsp.focus({workspace="1"})' >/dev/null
 sleep 0.4
-target_before=$(geometry "$target")
+read -r tx ty tw th _ < <(box "$target")
 pointer_before=$(hc cursorpos -j | jq -c .)
-ipc dropOn "$addr" "$target"
+ipc dropPoint "$addr" 3 $((tx + tw - 8)) $((ty + th / 2))
 wait_pending
-[[ "$(hc clients -j | jq -r --arg a "$addr" '.[]|select(.address==$a)|.workspace.id')" == 3 ]]
-[[ "$(hc clients -j | jq -r --arg a "$target" '.[]|select(.address==$a)|.workspace.id')" == 3 ]]
-[[ "$(geometry "$addr")" == "$target_before" ]] || {
-    echo "FAIL: source did not take selected target slot"; hc clients -j | jq '[.[]|{address,at,size,workspace}]'; cat "$tmp/qs.log"; exit 1;
-}
+read -r wx wy ww wh wws < <(box "$addr"); read -r tx2 ty2 tw2 th2 tws2 < <(box "$target")
+[[ "$wws" == 3 && "$tws2" == 3 && "$wy" == "$ty2" && "$wh" == "$th2" && "$wx" -ge $((tx2 + tw2)) ]] || {
+    echo "FAIL: W not inserted right of the hovered window on workspace 3"; dump; exit 1; }
 [[ "$(hc activeworkspace -j | jq .id)" == 1 ]]
 [[ "$(hc cursorpos -j | jq -c .)" == "$pointer_before" ]]
-echo 'PASS: production tiled transfer takes selected slot on hidden workspace'
+[[ "$(hc getoption dwindle:smart_split | head -1 | tr -d ' ')" == "bool:false" ]] || { echo "FAIL: smart_split not restored"; exit 1; }
+[[ "$(hc getoption dwindle:use_active_for_splits | head -1 | tr -d ' ')" == "bool:true" ]] || { echo "FAIL: use_active_for_splits not restored"; exit 1; }
+echo 'PASS: production tiled drop inserts at the drop point on a hidden workspace; state restored'
 if rg -i 'TypeError|ReferenceError|Error loading|Failed to load|Invalid dispatcher'  "$tmp/qs.log"; then exit 1; fi

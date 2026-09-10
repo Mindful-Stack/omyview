@@ -16,6 +16,8 @@ Item {
     property bool dragging: false        // set by Overview during a drag to suppress hover-zoom
 
     property bool dropTarget: false
+    // "left"|"right"|"top"|"bottom": which half a dragged tiled window would take here
+    property string dropSide: ""
 
     readonly property bool wantCapture: handle !== null && capMode !== "icon"
     readonly property string iconUrl: Quickshell.iconPath(String(cls).toLowerCase(), true)
@@ -74,5 +76,17 @@ Item {
             elide: Text.ElideRight; width: parent.width - 8
             text: tile.title.length ? tile.title : tile.cls
         }
+    }
+
+    // insertion preview: the half of this tile the dragged tiled window will be split into
+    Rectangle {
+        visible: tile.dropSide.length > 0
+        color: tile.borderColor
+        opacity: 0.45
+        radius: 4
+        x: tile.dropSide === "right" ? parent.width / 2 : 0
+        y: tile.dropSide === "bottom" ? parent.height / 2 : 0
+        width: (tile.dropSide === "left" || tile.dropSide === "right") ? parent.width / 2 : parent.width
+        height: (tile.dropSide === "top" || tile.dropSide === "bottom") ? parent.height / 2 : parent.height
     }
 }

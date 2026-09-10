@@ -322,4 +322,71 @@ TestCase {
         compare(Logic.edgeScrollDelta(400,400,0,300,16),0)
     }
 
+    // dropSide mirrors dwindle's smart-split rule (slope of point-from-centre vs aspect), so
+    // the drag preview shows the half the compositor will actually split into.
+    function test_drop_side_follows_smart_split_rule() {
+        var wide = { x: 0, y: 0, w: 400, h: 200 }
+        compare(Logic.dropSide(wide, 20, 100), "left")
+        compare(Logic.dropSide(wide, 380, 100), "right")
+        compare(Logic.dropSide(wide, 200, 10), "top")
+        compare(Logic.dropSide(wide, 200, 190), "bottom")
+        compare(Logic.dropSide(wide, 380, 150), "right")    // shallow angle wins near a corner
+        compare(Logic.dropSide(wide, 250, 190), "bottom")   // steep angle wins near a corner
+        var tall = { x: 0, y: 0, w: 200, h: 400 }
+        compare(Logic.dropSide(tall, 100, 380), "bottom")
+        compare(Logic.dropSide(tall, 190, 220), "right")
+        compare(Logic.dropSide(tall, 100, 200), "top")      // exact centre: NaN slope → top, like the C++
+    }
+    function test_rect_distance_is_zero_inside_and_grows_outside() {
+        var r = { x: 10, y: 10, w: 100, h: 50 }
+        compare(Logic.rectDistanceSq(r, 50, 30), 0)
+        compare(Logic.rectDistanceSq(r, 0, 30), 100)
+        compare(Logic.rectDistanceSq(r, 120, 70), 200)
+    }
+    // The drop plan is what the preview highlights and what a release does. A drop back onto
+    // the window's own slot, or a lone tiled window dropped inside its own workspace, plans
+    // nothing; otherwise the nearest candidate anchors and the side follows the smart-split rule.
+    function test_tiled_drop_plan_shares_eligibility_between_preview_and_release() {
+        var own = { x: 0, y: 0, w: 100, h: 100 }
+        var other = { x: 200, y: 0, w: 100, h: 100, address: "0xb" }
+        compare(Logic.tiledDropPlan([other], true, own, 50, 50), null, "own slot: nothing")
+        compare(Logic.tiledDropPlan([other], true, own, 100, 100), null, "own slot edge: nothing")
+        compare(Logic.tiledDropPlan([], true, own, 150, 50), null, "lone window in own workspace: nothing")
+        var plan = Logic.tiledDropPlan([other], true, own, 150, 50)
+        compare(plan.anchor, "0xb", "nearest tiled tile anchors even from the gap")
+        compare(plan.side, "left")
+        compare(Logic.tiledDropPlan([other], false, null, 290, 50).side, "right")
+        var empty = Logic.tiledDropPlan([], false, null, 150, 50)
+        compare(empty.anchor, "", "empty destination: insert without an anchor")
+        compare(empty.side, "")
+        // Ties go to the later (top-most) candidate.
+        var twin = { x: 200, y: 0, w: 100, h: 100, address: "0xc" }
+        compare(Logic.tiledDropPlan([other, twin], false, null, 250, 50).anchor, "0xc")
+    }
+    // The atomic Lua chunk must replay a native drop in order: float → (move) → measure the
+    // anchor → cursor → un-float, with smart_split forced on and the cursor restored, and never
+    // embed NaN/undefined. The cursor point is derived from the anchor's geometry read AFTER the
+    // float (detaching the window re-lays out the workspace), on the requested side.
+    function test_tiled_insert_lua_replays_native_drop() {
+        var lua = Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "bottom", x: 512.6, y: 1800.2 })
+        verify(lua.indexOf('address:0xabc') >= 0)
+        verify(lua.indexOf('"address:0xdef"') >= 0)
+        verify(lua.indexOf('smart_split = true') >= 0)
+        verify(lua.indexOf('workspace = "3"') >= 0)
+        verify(lua.indexOf('local x, y = 513, 1800') >= 0, "fallback point when there is no anchor")
+        verify(lua.indexOf('== "bottom" then y = a.at.y + a.size.y') >= 0, "bottom edge of the anchor")
+        verify(lua.indexOf('hl.get_cursor_pos()') >= 0)
+        verify(lua.indexOf('NaN') < 0 && lua.indexOf('undefined') < 0)
+        var order = [lua.indexOf('window.float('), lua.indexOf('window.move('),
+                     lua.indexOf('hl.get_window(anchorSel)'), lua.indexOf('cursor.move('),
+                     lua.lastIndexOf('window.float(')]
+        for (var i = 1; i < order.length; i++) verify(order[i] > order[i - 1], "step order " + i)
+        verify(lua.lastIndexOf('smart_split = smart') > lua.lastIndexOf('window.float('), "config restored after re-tile")
+        var none = Logic.tiledInsertLua("0xabc", 2, { anchor: "", side: "", x: 10, y: 20 })
+        verify(none.indexOf('local anchorSel = nil') >= 0, "no anchor: plain fallback point")
+        verify(none.indexOf('local x, y = 10, 20') >= 0)
+        var bad = Logic.tiledInsertLua("0xabc", 2, { anchor: "0xdef", side: "sideways", x: 1, y: 2 })
+        verify(bad.indexOf('sideways') < 0, "unknown side falls back to the anchor centre")
+    }
+
 }

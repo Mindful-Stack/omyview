@@ -16,15 +16,13 @@ ShellRoot {
             var rect = Logic._tileRect({ax:x,ay:y,sw:win.sw,sh:win.sh},mon,box,overview.params)
             overview.submitDrop(address,workspace,rect.x,rect.y)
         }
-        function dropOn(address: string, targetAddress: string): void {
+        // Drop so that the dragged tile's CENTRE maps to real global point (gx, gy) in `workspace`.
+        function dropPoint(address: string, workspace: int, gx: int, gy: int): void {
             overview.rebuild()
-            var win = overview._windowByAddress[address], target = overview._windowByAddress[targetAddress]
-            var box = overview.boxForWs(target.workspaceId), mon = overview._monByName[box.monitorName]
-            var targetRect = Logic._tileRect(target,mon,box,overview.params)
-            var sourceBox = overview.boxForWs(win.workspaceId)
-            var sourceRect = Logic._tileRect(win,overview._monByName[sourceBox.monitorName],sourceBox,overview.params)
-            overview.submitDrop(address,target.workspaceId,
-                targetRect.x+(targetRect.w-sourceRect.w)/2,targetRect.y+(targetRect.h-sourceRect.h)/2)
+            var box = overview.boxForWs(workspace), mon = overview._monByName[box.monitorName]
+            var t = overview.tileRectFor(address)
+            var r = Logic._tileRect({ax:gx, ay:gy, sw:1, sh:1}, mon, box, overview.params)
+            overview.submitDrop(address, workspace, r.x - t.w / 2, r.y - t.h / 2)
         }
         function openOverview(): void { overview.open() }
         function pending(): string { return JSON.stringify(overview.pendingMoves) }
