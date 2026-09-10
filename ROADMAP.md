@@ -5,7 +5,9 @@ thumbnails** (Quickshell `ScreencopyView`); **drag-and-drop of windows between w
 (silent move); number/arrow/Enter selection; click-to-focus / middle-click-close. Coordinate
 math + reconcile in a unit-tested `logic.js` (Tier 1 CI); Tier 2 nested-Hyprland integration.
 Maintained as a standalone public repo (`Mindful-Stack/omyview`). See `DESIGN.md` (what/why),
-`docs/specs/` + `docs/plans/` (the v2 design + build), and `PLAN.md` (v1 build log).
+`docs/specs/` + `docs/plans/` (the v2 design + build), and `PLAN.md` (v1 build log). Window
+states (2026-09-10): fullscreen windows drawn in their recovered slot with an un-fullscreen
+badge; floating tiles stack above tiled.
 
 ## Next steps
 

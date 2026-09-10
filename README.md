@@ -16,6 +16,9 @@ removed `walker`.
 - **Drag-and-drop between workspaces.** Grab a window and drop it on another workspace box to
   move it there — a *silent* move that doesn't switch you to that workspace. The overview
   stays open so you can keep organizing.
+- **Fullscreen-aware.** A workspace with a fullscreen window still shows every window in its real
+  tiled slot; the fullscreen one carries a small corner badge. Click the badge to un-fullscreen it
+  without leaving the overview. Floating windows always show on top of tiled ones.
 - **Per-monitor rows.** Workspaces are grouped into one boxed row per monitor, derived live
   from Hyprland's workspace→monitor mapping. Docked shows a row per monitor; undocked
   collapses to one.
@@ -93,6 +96,7 @@ Press **SUPER+P**. The overlay opens on your focused monitor.
 | **Click a window**       | Focus that window and close the overview                  |
 | **Middle-click a window**| Close that window                                         |
 | **Click an empty box**   | Jump to that workspace                                    |
+| **Click the ⛶ badge**    | Turn fullscreen off for that window (overview stays open) |
 | **Esc / click-out**      | Close                                                     |
 
 ### Updating
@@ -258,8 +262,11 @@ outside a workspace cancels. A **tiled** drop behaves like Hyprland's own drag-a
 the window is re-tiled as a split of the tile you drop it on, on the side you drop it
 (the hovered half is previewed while dragging). With two windows that is a swap; with more
 it re-organises the layout. This works across workspaces, including hidden ones, without
-changing the active workspace, and an empty destination just fills. Grouped and fullscreen
-windows are not re-tiled. Edge scrolling helps reach workspaces below the viewport.
+changing the active workspace, and an empty destination just fills. Grouped windows are not
+re-tiled; fullscreen windows are treated as tiled (the workspace's fullscreen state is restored
+after a drop, and a fullscreen window dragged to another workspace arrives tiled). Edge scrolling
+helps reach workspaces below the viewport. `mise run test-integration` also runs
+`tests/integration/fullscreen.sh` (badge, fullscreen anchors, in-place re-tile).
 
 While in transit the dragged tile is a ghost: it shrinks to 60% around the point you grabbed
 and turns translucent, so the drop highlight stays visible. The **pointer** decides where a

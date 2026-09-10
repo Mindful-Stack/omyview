@@ -52,7 +52,7 @@ Item {
     // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.
     readonly property var params: ({
         maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 3, cellSpacing: 4,
-        rowSpacing: 8, headerH: 22, minTileW: 8, minTileH: 6
+        rowSpacing: 8, headerH: 22, minTileW: 8, minTileH: 6, slotGapTolerance: 24
     })
 
     property var groups: []
@@ -101,7 +101,8 @@ Item {
                 if (!o || !o.at || !o.size || !o.address) continue
                 wins.push({ address: o.address, cls: o["class"] || "", title: o.title || "",
                             ax: o.at[0], ay: o.at[1], sw: o.size[0], sh: o.size[1],
-                            workspaceId: ws.id, floating: !!o.floating, fullscreen: !!o.fullscreen,
+                            workspaceId: ws.id, floating: !!o.floating,
+                            fullscreen: Logic.fullscreenMode(o),
                             grouped: !!(o.grouped && o.grouped.length) })
             }
         }
@@ -113,6 +114,9 @@ Item {
     // Reconcile the tiles ListModel in place (drag-safe: never touch the dragged address).
     property string draggingAddress: ""
     property var pendingMoves: ({})
+    // addr -> { mode, deadline }: an un-fullscreen was dispatched; the badge stays hidden until
+    // fresh data reports that mode, or the deadline passes (rejected: badge returns).
+    property var pendingFullscreen: ({})
     property var dragTile: null
     property int dropTargetWs: -1
     property string dropTargetAddress: ""
@@ -128,6 +132,32 @@ Item {
         Hyprland.dispatch('hl.dsp.window.move({ x = "' + pos.x + '", y = "' + pos.y +
                           '", window = "address:' + addr + '" })')
     }
+    function setTileRoles(addr, roles) {
+        for (var i = 0; i < tilesModel.count; i++)
+            if (tilesModel.get(i).address === addr) { tilesModel.set(i, roles); return }
+    }
+    // Badge click: turn fullscreen off for `addr` silently (no focus, no workspace switch, the
+    // overview stays open). Optimistic: the badge hides now and the tile keeps its recovered
+    // slot, which is where the window lands anyway.
+    function unfullscreen(addr) {
+        var win = _windowByAddress[addr]
+        if (!win || !win.fullscreen) return
+        pendingFullscreen[addr] = { mode: 0, deadline: Date.now() + 1800 }
+        setTileRoles(addr, { fsPending: true })
+        Hyprland.dispatch(Logic.unfullscreenLua(addr))
+        scheduleRebuild()
+        reconcileTimer.restart()
+    }
+    function reconcileFullscreen(windows) {
+        var byAddress = {}
+        for (var i = 0; i < windows.length; i++) byAddress[windows[i].address] = windows[i]
+        for (var addr in pendingFullscreen) {
+            var pending = pendingFullscreen[addr], win = byAddress[addr]
+            if (win && win.fullscreen !== pending.mode && Date.now() < pending.deadline) continue
+            delete pendingFullscreen[addr]
+            setTileRoles(addr, { fsPending: false })
+        }
+    }
     // Tiles that can anchor a tiled insert inside workspace `workspaceId`: the tiled, settled
     // tiles other than the dragged one, in stacking order.
     function tiledAnchorCandidates(addr, workspaceId) {
@@ -135,7 +165,7 @@ Item {
         for (var i = 0; i < tilesModel.count; i++) {
             var tile = tilesModel.get(i), win = _windowByAddress[tile.address]
             if (tile.address === addr || tile.wsid !== workspaceId || !win ||
-                win.floating || win.fullscreen || pendingMoves[tile.address]) continue
+                win.floating || tile.layer === 0 || pendingMoves[tile.address]) continue
             out.push({ x: tile.wx, y: tile.wy, w: tile.ww, h: tile.wh, address: tile.address })
         }
         return out
@@ -147,7 +177,7 @@ Item {
         var box = boxForWs(targetWs), mon = box ? _monByName[box.monitorName] : null
         if (!box || !mon) return null
         var same = targetWs === win.workspaceId
-        var own = same ? Logic._tileRect(win, mon, box, params) : null
+        var own = same ? tileRectFor(addr) : null       // the model rect: the recovered slot for a fullscreen window
         return Logic.tiledDropPlan(tiledAnchorCandidates(addr, targetWs), same, own, cx, cy)
     }
     function tileRectFor(addr) {
@@ -167,9 +197,16 @@ Item {
         // Only used when there is no anchor window to measure inside the compositor.
         var fallback = Logic.dropToWindowPos(cx, cy, box, mon, params)
         // Optimistic: the tile stays at the drop point until fresh geometry differs from the
-        // pre-drop one (a cross-workspace insert differs by workspace at once).
+        // pre-drop one (a cross-workspace insert differs by workspace at once). A fullscreen
+        // window re-tiled in place reports the same fullscreen rect it started with, so the
+        // anchor's geometry is recorded too: any change to it is a sufficient signal that the
+        // insert happened (an unrelated anchor change acknowledges early too, but that window is
+        // bounded by the deadline and the false-positive is harmless).
+        var anchorWin = plan.anchor ? _windowByAddress[plan.anchor] : null
         pendingMoves[addr] = { workspaceId: targetWs, pos: null, deadline: Date.now() + 1800,
-                               before: { ws: win.workspaceId, ax: win.ax, ay: win.ay, sw: win.sw, sh: win.sh } }
+                               before: { ws: win.workspaceId, ax: win.ax, ay: win.ay, sw: win.sw, sh: win.sh,
+                                         anchor: anchorWin ? { address: plan.anchor, ax: anchorWin.ax, ay: anchorWin.ay,
+                                                               sw: anchorWin.sw, sh: anchorWin.sh } : null } }
         for (var i = 0; i < tilesModel.count; i++) {
             if (tilesModel.get(i).address !== addr) continue
             tilesModel.set(i, { wx: dropX, wy: dropY, wsid: targetWs })
@@ -185,7 +222,7 @@ Item {
         if (!box || !mon || !win) return
         var sourceWs = win.workspaceId // model.wsid may still be optimistic
         var tile = tileRectFor(addr)
-        if (!win.floating && !win.fullscreen && !win.grouped && tile) {
+        if (!win.floating && !win.grouped && tile) {
             var cx = px === undefined ? dropX + tile.w / 2 : px
             var cy = py === undefined ? dropY + tile.h / 2 : py
             if (startTiledInsert(addr, win, targetWs, box, mon, cx, cy, dropX, dropY)) {
@@ -195,7 +232,7 @@ Item {
             return
         }
         var pos = win.floating ? Logic.dropToWindowPos(dropX, dropY, box, mon, params, win) : null
-        if (targetWs === sourceWs && !pos) return // grouped/fullscreen tiled: snap back in place
+        if (targetWs === sourceWs && !pos) return // grouped tiled: snap back in place
         var pending = { workspaceId: targetWs, pos: pos,
                         positioning: targetWs === sourceWs,
                         deadline: Date.now() + 1800 }
@@ -204,7 +241,10 @@ Item {
         // compositor acknowledges this move; refreshToplevels is asynchronous.
         for (var i = 0; i < tilesModel.count; i++) {
             if (tilesModel.get(i).address !== addr) continue
-            var rect = pos ? Logic._tileRect({ax:pos.x, ay:pos.y, sw:win.sw, sh:win.sh},
+            // A floating fullscreen window has no slot: Logic._tileRect would span the whole
+            // output and fill the cell until the next rebuild, so keep the tile's current size
+            // and only move it to the drop point.
+            var rect = (pos && !win.fullscreen) ? Logic._tileRect({ax:pos.x, ay:pos.y, sw:win.sw, sh:win.sh},
                                             mon, box, params) : null
             tilesModel.set(i, { wx: rect ? rect.x : dropX, wy: rect ? rect.y : dropY,
                                 ww: rect ? rect.w : tilesModel.get(i).ww,
@@ -234,10 +274,16 @@ Item {
             }
             if (!win || win.workspaceId !== pending.workspaceId) continue
             if (pending.before) {
-                // A re-tile is acknowledged once fresh geometry differs from the pre-drop one.
-                var b = pending.before
-                if (b.ws === win.workspaceId && b.ax === win.ax && b.ay === win.ay &&
-                    b.sw === win.sw && b.sh === win.sh) continue
+                // A re-tile is acknowledged once the dragged window's workspace or geometry
+                // differs from the pre-drop record, OR the anchor's geometry does: every insert
+                // splits the anchor, and a fullscreen window re-tiled in place ends up
+                // reporting the same fullscreen rect it started with.
+                var b = pending.before, a = b.anchor, aw = a ? byAddress[a.address] : null
+                var ownSame = b.ws === win.workspaceId && b.ax === win.ax && b.ay === win.ay &&
+                              b.sw === win.sw && b.sh === win.sh
+                var anchorSame = !a || !!(aw && aw.ax === a.ax && aw.ay === a.ay && aw.sw === a.sw && aw.sh === a.sh)
+                                  // a vanished anchor acknowledges: the insert is moot
+                if (ownSame && anchorSame) continue
                 delete pendingMoves[addr]
                 continue
             }
@@ -254,7 +300,6 @@ Item {
                                                     Math.abs(win.sh - pending.size.h) <= 1))))
                 delete pendingMoves[addr]
         }
-        if (!Object.keys(pendingMoves).length) reconcileTimer.stop()
     }
     // Pointer position in canvas coordinates during a drag (viewport point + scroll offset).
     function dragPointer() {
@@ -267,7 +312,7 @@ Item {
         var ws = Logic.hitWorkspace(boxes, cx, cy)
         dropTargetWs = ws === null ? -1 : ws
         var win = _windowByAddress[draggingAddress]
-        var tiledDrag = win && !win.floating && !win.fullscreen && !win.grouped && ws !== null
+        var tiledDrag = win && !win.floating && !win.grouped && ws !== null
         var plan = tiledDrag ? tiledDropPlan(draggingAddress, win, ws, cx, cy) : null
         dropTargetAddress = plan ? plan.anchor : ""
         dropTargetSide = plan ? plan.side : ""
@@ -307,7 +352,8 @@ Item {
             var t = d.adds[a]
             tilesModel.append({ address: t.address, wx: t.x, wy: t.y, ww: t.w, wh: t.h,
                                 cls: clsFor(t.address), title: titleFor(t.address),
-                                wsid: t.workspaceId, floating: floatingFor(t.address) })
+                                wsid: t.workspaceId, floating: floatingFor(t.address),
+                                layer: t.layer, fullscreen: t.fullscreen, fsPending: false })
         }
         for (var u = 0; u < d.updates.length; u++) {
             var tu = d.updates[u]
@@ -315,7 +361,8 @@ Item {
             var iu = indexOf(tu.address)
             if (iu >= 0) tilesModel.set(iu, { wx: tu.x, wy: tu.y, ww: tu.w, wh: tu.h,
                                               title: titleFor(tu.address), cls: clsFor(tu.address), wsid: tu.workspaceId,
-                                              floating: floatingFor(tu.address) })
+                                              floating: floatingFor(tu.address),
+                                              layer: tu.layer, fullscreen: tu.fullscreen })
         }
         for (var rmi = 0; rmi < d.removes.length; rmi++) {
             if (root.draggingAddress === d.removes[rmi] || pendingMoves[d.removes[rmi]]) continue // cancel handled elsewhere
@@ -349,6 +396,8 @@ Item {
         root._windowByAddress = wmap
         if (draggingAddress && !wmap[draggingAddress]) endDrag()
         reconcileMoves(input.windows)
+        reconcileFullscreen(input.windows)
+        if (!Object.keys(pendingMoves).length && !Object.keys(pendingFullscreen).length) reconcileTimer.stop()
         root._clsByAddress = cmap
         root._titleByAddress = tmap
         root._floatingByAddress = fmap
@@ -583,6 +632,9 @@ Item {
                             required property var model
                             x: model.wx; y: model.wy; width: model.ww; height: model.wh
                             cls: model.cls
+                            tileLayer: model.layer
+                            fullscreen: model.fullscreen
+                            fullscreenPending: model.fsPending
                             title: model.title
                             dragging: root.draggingAddress === model.address
                             handle: root.handleByAddress[model.address] || null
@@ -605,6 +657,7 @@ Item {
                             Component.onDestruction: {
                                 if (root.dragTile === windowTile) root.endDrag()
                             }
+                            onUnfullscreenRequested: root.unfullscreen(model.address)
                             MouseArea {
                                 id: dragArea
                                 anchors.fill: parent
@@ -616,6 +669,8 @@ Item {
                                     if (m.button !== Qt.LeftButton) return
                                     // A second grab supersedes that address's pending visual state.
                                     delete root.pendingMoves[model.address]
+                                    delete root.pendingFullscreen[model.address]
+                                    root.setTileRoles(model.address, { fsPending: false })
                                     windowTile.beginGrab(m.x, m.y)   // ghost shrinks around the grab point
                                     root.draggingAddress = model.address
                                     root.dragTile = windowTile

@@ -33,20 +33,27 @@ function _usableRect(mon) {
     return { x: r[0], y: r[1], w: l.w - r[0] - r[2], h: l.h - r[1] - r[3] }
 }
 
-function _tileRect(win, mon, box, P) {
-    var l = _monLogical(mon), R = _usableRect(mon)
+function _tileRect(win, mon, box, P, slot) {
+    var R = _usableRect(mon)
     var mmW = box.w - 2 * P.cellInset, mmH = box.h - 2 * P.cellInset   // was P.cellW/P.cellH
     var k = Math.min(mmW / R.w, mmH / R.h)
     var offX = P.cellInset + (mmW - R.w * k) / 2
     var offY = P.cellInset + (mmH - R.h * k) / 2
-    var isFull = !!win.fullscreen ||
-        (Math.abs(win.ax - mon.x) <= 1 && Math.abs(win.ay - mon.y) <= 1 &&
-         Math.abs(win.sw - l.w) <= 1 && Math.abs(win.sh - l.h) <= 1)
-    if (isFull)
-        return { x: box.x + offX, y: box.y + offY, w: R.w * k, h: R.h * k }
-    var wx = (win.ax - mon.x) - R.x, wy = (win.ay - mon.y) - R.y
+    var wx, wy, sw, sh
+    if (slot) {                                   // caller-decided rect (recovered slot etc.)
+        wx = slot.x; wy = slot.y; sw = slot.w; sh = slot.h
+    } else {
+        // Callers place flagged fullscreen windows via `slot`; the geometry heuristic remains
+        // for unflagged windows that happen to span the output.
+        var l = _monLogical(mon)
+        var isFull = Math.abs(win.ax - mon.x) <= 1 && Math.abs(win.ay - mon.y) <= 1 &&
+             Math.abs(win.sw - l.w) <= 1 && Math.abs(win.sh - l.h) <= 1
+        if (isFull)
+            return { x: box.x + offX, y: box.y + offY, w: R.w * k, h: R.h * k }
+        wx = (win.ax - mon.x) - R.x; wy = (win.ay - mon.y) - R.y; sw = win.sw; sh = win.sh
+    }
     var cx = Math.max(0, wx), cy = Math.max(0, wy)
-    var cR = Math.min(wx + win.sw, R.w), cB = Math.min(wy + win.sh, R.h)
+    var cR = Math.min(wx + sw, R.w), cB = Math.min(wy + sh, R.h)
     var cw = cR - cx, ch = cB - cy
     if (cw <= 0 || ch <= 0) return null
     var tx = box.x + offX + cx * k, ty = box.y + offY + cy * k
@@ -54,6 +61,80 @@ function _tileRect(win, mon, box, P) {
     tx = Math.max(box.x + P.cellInset, Math.min(tx, box.x + box.w - P.cellInset - tw))
     ty = Math.max(box.y + P.cellInset, Math.min(ty, box.y + box.h - P.cellInset - th))
     return { x: tx, y: ty, w: tw, h: th }
+}
+
+// Hyprland's `fullscreen` client field is 0 none / 1 maximized / 2 fullscreen; older callers
+// passed a boolean, which means fullscreen.
+function fullscreenMode(win) {
+    var m = win.fullscreen === true ? 2 : (win.fullscreen | 0)
+    return Math.max(0, Math.min(2, m))
+}
+
+function _uniqSorted(a) {
+    a = a.slice().sort(function (p, q) { return p - q })
+    var out = []
+    for (var i = 0; i < a.length; i++) if (!out.length || a[i] - out[out.length - 1] > 0.5) out.push(a[i])
+    return out
+}
+
+// Where a fullscreen window sits in the tiled layout, recovered from what the OTHER tiled
+// windows leave uncovered: dwindle slots partition the usable rect, and fullscreen hides the
+// others without moving them, so the hole is the slot the window returns to. `R` is the usable
+// rect and `others` rects in the same coordinates (floating/fullscreen windows excluded by the
+// caller). Grid R on every edge; seed on the uncovered cell with the largest MINIMUM side (a gap
+// strip only wins that if a gap is as thick as the slot's thinnest cell, which no sane
+// configuration reaches, so no gap configuration is needed); grow while whole neighbouring
+// columns/rows are uncovered (absorbs adjacent gap padding, never crosses a neighbour); trim the
+// outer band thinner than P.slotGapTolerance on each side (cumulative, so thin projected-edge
+// cells just inside the slot are not peeled one after another; at most tol px of a slot edge can
+// be lost). Null when nothing usable is uncovered.
+function recoverSlot(R, others, P) {
+    var tol = P.slotGapTolerance || 24
+    var xs = [R.x, R.x + R.w], ys = [R.y, R.y + R.h], rects = []
+    for (var i = 0; i < others.length; i++) {
+        var o = others[i]
+        var x0 = Math.max(R.x, o.x), y0 = Math.max(R.y, o.y)
+        var x1 = Math.min(R.x + R.w, o.x + o.w), y1 = Math.min(R.y + R.h, o.y + o.h)
+        if (x1 <= x0 || y1 <= y0) continue
+        rects.push({ x0: x0, y0: y0, x1: x1, y1: y1 })
+        xs.push(x0, x1); ys.push(y0, y1)
+    }
+    xs = _uniqSorted(xs); ys = _uniqSorted(ys)
+    var nx = xs.length - 1, ny = ys.length - 1
+    var cov = []                                   // cov[ci][cj]: cell centre inside some rect
+    var ci, cj
+    for (ci = 0; ci < nx; ci++) {
+        cov.push([])
+        for (cj = 0; cj < ny; cj++) {
+            var cx = (xs[ci] + xs[ci + 1]) / 2, cy = (ys[cj] + ys[cj + 1]) / 2, hit = false
+            for (var k = 0; k < rects.length && !hit; k++)
+                hit = cx > rects[k].x0 && cx < rects[k].x1 && cy > rects[k].y0 && cy < rects[k].y1
+            cov[ci].push(hit)
+        }
+    }
+    var si = -1, sj = -1, best = 0
+    for (ci = 0; ci < nx; ci++) for (cj = 0; cj < ny; cj++) {
+        if (cov[ci][cj]) continue
+        var m = Math.min(xs[ci + 1] - xs[ci], ys[cj + 1] - ys[cj])
+        if (m > best) { best = m; si = ci; sj = cj }
+    }
+    if (si < 0) return null
+    function colFree(c, ja, jb) { for (var j = ja; j <= jb; j++) if (cov[c][j]) return false; return true }
+    function rowFree(r, ia, ib) { for (var i2 = ia; i2 <= ib; i2++) if (cov[i2][r]) return false; return true }
+    var i0 = si, i1 = si, j0 = sj, j1 = sj, grew = true
+    while (grew) {
+        grew = false
+        if (i0 > 0 && colFree(i0 - 1, j0, j1)) { i0--; grew = true }
+        if (i1 < nx - 1 && colFree(i1 + 1, j0, j1)) { i1++; grew = true }
+        if (j0 > 0 && rowFree(j0 - 1, i0, i1)) { j0--; grew = true }
+        if (j1 < ny - 1 && rowFree(j1 + 1, i0, i1)) { j1++; grew = true }
+    }
+    var tx0 = xs[i0];     while (i0 < i1 && xs[i0 + 1] - tx0 < tol) i0++
+    var tx1 = xs[i1 + 1]; while (i1 > i0 && tx1 - xs[i1] < tol) i1--
+    var ty0 = ys[j0];     while (j0 < j1 && ys[j0 + 1] - ty0 < tol) j0++
+    var ty1 = ys[j1 + 1]; while (j1 > j0 && ty1 - ys[j1] < tol) j1--
+    var slot = { x: xs[i0], y: ys[j0], w: xs[i1 + 1] - xs[i0], h: ys[j1 + 1] - ys[j0] }
+    return Math.min(slot.w, slot.h) <= tol ? null : slot
 }
 
 function layout(input) {
@@ -108,12 +189,39 @@ function layout(input) {
         if (r < order.length - 1) y += P.rowSpacing             // between monitor groups
     }
 
+    // Tiled windows that are not fullscreen or maximized, per workspace, in usable-rect-local
+    // coords: what a fullscreen window's slot is recovered from (see recoverSlot).
+    var tiledByWs = {}
+    for (var pi = 0; pi < input.windows.length; pi++) {
+        var pw = input.windows[pi]
+        if (pw.floating || fullscreenMode(pw)) continue
+        var pbox = boxByWs[pw.workspaceId], pmon = pbox ? monByName[pbox.monitorName] : null
+        if (!pmon) continue
+        var pR = _usableRect(pmon)
+        ;(tiledByWs[pw.workspaceId] = tiledByWs[pw.workspaceId] || []).push(
+            { x: (pw.ax - pmon.x) - pR.x, y: (pw.ay - pmon.y) - pR.y, w: pw.sw, h: pw.sh })
+    }
     var tiles = []
     for (var wi = 0; wi < input.windows.length; wi++) {
         var win = input.windows[wi], wbox = boxByWs[win.workspaceId]; if (!wbox) continue
         var wmon = monByName[wbox.monitorName]; if (!wmon) continue
-        var t = _tileRect(win, wmon, wbox, P)
-        if (t) { t.address = win.address; t.workspaceId = win.workspaceId; tiles.push(t) }
+        var mode = fullscreenMode(win), layer = win.floating ? 2 : 1, slot = null
+        if (mode) {
+            var UR = _usableRect(wmon), whole = { x: 0, y: 0, w: UR.w, h: UR.h }
+            if (win.floating) {
+                slot = { x: UR.w * 0.2, y: UR.h * 0.2, w: UR.w * 0.6, h: UR.h * 0.6 }   // no slot exists
+            } else {
+                var others = tiledByWs[win.workspaceId] || []
+                slot = others.length ? recoverSlot(whole, others, P) : whole
+                if (!slot) { slot = whole; layer = 0 }                              // ambiguous → backdrop
+            }
+        }
+        var t = _tileRect(win, wmon, wbox, P, slot)
+        if (t) {
+            t.address = win.address; t.workspaceId = win.workspaceId
+            t.layer = layer; t.fullscreen = mode
+            tiles.push(t)
+        }
     }
     return { canvasSize: { w: canvasW, h: y }, boxes: boxes, tiles: tiles,
              groups: groups, cell: { w: cw, h: ch, cols: cols } }
@@ -188,9 +296,11 @@ function tiledDropPlan(candidates, sameWorkspace, own, cx, cy) {
 
 // One atomic Lua chunk (Hyprland Lua-config mode evaluates `dispatch` payloads as
 // `hl.dispatch(<payload>)`, and accepts a function) that replays a native tiled drop:
-//   float the window (detaches it from the tree) → move it silently to the target workspace if
-//   needed → warp the cursor onto the anchor's `side` edge → un-float (re-tiles at the cursor)
-//   → restore.
+//   strip the target workspace's fullscreen window (and the dragged window's own fullscreen,
+//   if any) so every window is measured in its tiled slot → float the window (detaches it from
+//   the tree) → move it silently to the target workspace if needed → warp the cursor onto the
+//   anchor's `side` edge → un-float (re-tiles at the cursor) → re-apply the fullscreen modes
+//   stripped above → restore focus (only if the dispatcher moved it) and the cursor.
 // Detaching the window re-lays out the target workspace, so the cursor point is computed from
 // the anchor's geometry AFTER the float, not from the overview's pre-drop layout: the edge
 // midpoint of the requested side (inset so the hit test resolves to the anchor), which under
@@ -215,15 +325,29 @@ function tiledInsertLua(addr, targetWs, placement) {
         '  local w = hl.get_window(sel)\n' +
         '  if not w or w.floating then return end\n' +
         '  local anchorSel = ' + anchorSel + '\n' +
+        '  local prevW = hl.get_active_window()\n' +
         '  local cur = hl.get_cursor_pos()\n' +
         '  local smart = hl.get_config("dwindle.smart_split")\n' +
         '  local useActive = hl.get_config("dwindle.use_active_for_splits")\n' +
         '  local aws = hl.get_active_workspace()\n' +
         '  local onActive = aws ~= nil and aws.id == ' + ws + '\n' +
+        // Fullscreen bookkeeping. The target workspace's fullscreen window is stripped so every
+        // window there (the anchor included) is measured in its tiled slot, and re-applied
+        // afterwards; the dragged window's own mode is kept only for a same-workspace re-tile.
+        '  local tws = hl.get_workspace("' + ws + '")\n' +
+        '  local fsWin = tws and tws.fullscreen_window or nil\n' +
+        '  local fa = fsWin and tostring(fsWin.address or "") or ""\n' +
+        '  if fa ~= "" and fa:sub(1, 2) ~= "0x" then fa = "0x" .. fa end\n' +
+        '  local fsSel = fa ~= "" and ("address:" .. fa) or nil\n' +
+        '  local fsMode = fsWin and tws.fullscreen_mode or 0\n' +
+        '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
+        '  local ownMode = same and w.fullscreen or 0\n' +
         '  hl.config({ dwindle = { smart_split = true, use_active_for_splits = not onActive } })\n' +
         '  pcall(function()\n' +
+        '    if fsSel then ' + fullscreenBodyLua('fsSel', '0') + ' end\n' +
+        '    ' + fullscreenBodyLua('sel', '0') + '\n' +
         '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
-        '    if w.workspace == nil or w.workspace.id ~= ' + ws + ' then\n' +
+        '    if not same then\n' +
         '      hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel }))\n' +
         '    end\n' +
         '    local x, y = ' + gx + ', ' + gy + '\n' +
@@ -238,9 +362,67 @@ function tiledInsertLua(addr, targetWs, placement) {
         '    end\n' +
         '    hl.dispatch(hl.dsp.cursor.move({ x = math.floor(x + 0.5), y = math.floor(y + 0.5) }))\n' +
         '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
+        '    if fsSel and fsSel ~= sel then ' + fullscreenBodyLua('fsSel', 'fsMode') + ' end\n' +
+        '    if ownMode ~= 0 then ' + fullscreenBodyLua('sel', 'ownMode') + ' end\n' +
         '  end)\n' +
         '  hl.config({ dwindle = { smart_split = smart, use_active_for_splits = useActive } })\n' +
-        '  if cur then hl.dispatch(hl.dsp.cursor.move({ x = cur.x, y = cur.y })) end\n' +
+        '  ' + restoreFocusLua('prevW', 'cur') + '\n' +
+        'end'
+    ).replace(/\n\s*/g, ' ')
+}
+
+// ---- fullscreen ----
+//
+// Lua statements that leave the window selected by the Lua expression `sel` (e.g. '"address:0x1"'
+// or a local name) in fullscreen mode `modeExpr` (a Lua expression: 0 off, 1 maximized,
+// 2 fullscreen). Re-reads the window and toggles only when its mode differs, so the statements
+// are idempotent and a stale request is harmless. Hyprland's toggle turns fullscreen OFF when
+// asked for the mode the window already has and SWITCHES modes otherwise, so when turning off the
+// name is taken from the window's current mode.
+// Returns newline-separated statements; the outermost chunk builder must flatten to one line.
+function fullscreenBodyLua(sel, modeExpr) {
+    return (
+        'do local fw, fm = hl.get_window(' + sel + '), ' + modeExpr + '\n' +
+        '  if fw and fm and fw.fullscreen ~= fm then\n' +
+        '    local name = (fm == 1 or (fm == 0 and fw.fullscreen == 1)) and "maximized" or "fullscreen"\n' +
+        '    hl.dispatch(hl.dsp.window.fullscreen({ window = ' + sel + ', mode = name, action = "toggle" }))\n' +
+        '  end\n' +
+        'end'
+    )
+}
+
+// Lua statements that re-focus the window `prevExpr` (an HL.Window or nil, read before the
+// change) when the active window is no longer it, then move the cursor back to `curExpr`
+// (an HL.Vec2 or nil). The probe (tests/integration/probe-fullscreen.sh) showed the fullscreen
+// dispatcher can drop focus to nil, and focusing warps the cursor, so every chunk that touches
+// fullscreen ends with this. Addresses from Lua may lack the 0x prefix hyprctl uses.
+// Returns newline-separated statements; the outermost chunk builder must flatten to one line.
+function restoreFocusLua(prevExpr, curExpr) {
+    return (
+        'do local nowW = hl.get_active_window()\n' +
+        '  if ' + prevExpr + ' and (not nowW or nowW.address ~= ' + prevExpr + '.address) then\n' +
+        '    local a = tostring(' + prevExpr + '.address)\n' +
+        '    if a:sub(1, 2) ~= "0x" then a = "0x" .. a end\n' +
+        '    hl.dispatch(hl.dsp.focus({ window = "address:" .. a }))\n' +
+        '  end\n' +
+        '  if ' + curExpr + ' then hl.dispatch(hl.dsp.cursor.move({ x = ' + curExpr + '.x, y = ' + curExpr + '.y })) end\n' +
+        'end'
+    )
+}
+
+// One atomic chunk that turns fullscreen off for `addr`. Focus is left unchanged (re-focused
+// only if the dispatcher moved it) and the cursor is restored. Used by the tile badge. The
+// toggle runs inside pcall so restoreFocusLua still runs (and
+// focus/cursor still land back where they were) even if the dispatcher throws — parity with
+// tiledInsertLua's pcall-wrapped re-tile step.
+function unfullscreenLua(addr) {
+    return (
+        'function()\n' +
+        '  local prevW, cur = hl.get_active_window(), hl.get_cursor_pos()\n' +
+        '  pcall(function()\n' +
+        fullscreenBodyLua('"address:' + addr + '"', '0') + '\n' +
+        '  end)\n' +
+        restoreFocusLua('prevW', 'cur') + '\n' +
         'end'
     ).replace(/\n\s*/g, ' ')
 }
