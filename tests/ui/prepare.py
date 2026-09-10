@@ -18,6 +18,7 @@ qml = qml.replace('id: root', '''id: root
     property alias testModel: tilesModel
     property alias testFlick: flick
     property alias testCanvas: canvas
+    property alias testDropWash: dropWash
     property QtObject compositor: QtObject {
         property var monitors: ({values: []})
         property var workspaces: ({values: []})

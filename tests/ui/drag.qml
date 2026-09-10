@@ -346,5 +346,44 @@ TestCase {
         dragOntoTarget(1)
         compare(view.compositor.commands.length,0)
     }
+    // Hover a floating drag over a workspace whose only window is fullscreen (its preview fills
+    // the well, hiding the well tint): the drop wash must show on that box, above the preview.
+    function test_floating_drag_over_fullscreen_workspace_shows_wash_above_preview() {
+        client.floating=true
+        var full={address:"0x456",at:[0,1440],size:[1920,1080],floating:false,
+                  title:"Full","class":"test",fullscreen:1}
+        view.compositor.workspaces.values[1].toplevels.values.push({lastIpcObject:full})
+        view.rebuild()
+        var wash=view.testDropWash, b=view.boxes[1]
+        verify(!wash.visible,"no wash before a drag")
+        var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        var goal=view.testCanvas.mapToItem(tc,b.x+b.w/2,b.y+b.h/2)
+        mouseMove(tc,goal.x,goal.y,20)
+        compare(view.dropTargetWs,2)
+        verify(wash.visible,"wash shows over the target box")
+        compare(wash.x,b.x); compare(wash.y,b.y); compare(wash.width,b.w)
+        var children=view.testCanvas.children, fullTile=null
+        for (var i=0;i<children.length;i++)
+            if (children[i].model && children[i].model.address==="0x456") fullTile=children[i]
+        verify(fullTile!==null && wash.z > fullTile.z,"wash stacks above the fullscreen preview")
+        view.close()
+        mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
+        verify(!wash.visible,"wash gone after release")
+    }
+    // A tiled drag with an insertion preview keeps the cue on the anchor tile: no wash.
+    function test_tiled_drag_with_insertion_preview_shows_no_wash() {
+        addTarget(1)
+        var target=view.testModel.get(1), t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        var goal=view.testCanvas.mapToItem(tc,target.wx+target.ww*0.9,target.wy+target.wh/2)
+        mouseMove(tc,goal.x,goal.y,20)
+        compare(view.dropTargetAddress,"0x456")
+        verify(!view.testDropWash.visible,"insertion preview replaces the wash")
+        view.close()
+        mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
+    }
 
 }

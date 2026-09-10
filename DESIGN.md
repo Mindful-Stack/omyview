@@ -202,7 +202,10 @@ unchanged afterwards.
 Tone steps instead of outlines, end-4 style: a borderless card with its own radius and a soft
 `RectangularShadow` (`CardShadow.qml`), workspace wells filled with the menu text colour at the
 theme's `normalFillAlpha`, a large low-contrast numeral behind the windows, and one 2px accent
-selection frame that follows keyboard selection or the drag's drop target. Tiles rest at scale 1
-with only a 12 % hairline. Monitor chips are plain text and only laid out with more than one
-monitor. The scrim is configurable via `~/.config/omarchy/omyview.json` (`OmyviewConfig.qml`).
+selection frame that follows keyboard selection only (it recedes during a drag and never moves
+to the drop target). The drop cue is drawn above the previews: the tiled-insert half on the
+anchor tile when there is one, otherwise an accent wash over the target well. Tiles rest at
+scale 1 with only a 12 % hairline. Monitor chips are plain text; `Logic.layout` lays out their
+header band only when more than one monitor has workspaces. The scrim is configurable via
+`~/.config/omarchy/omyview.json` (`OmyviewConfig.qml`).
 Design: `docs/specs/2026-09-10-restyle-design.md`. Motion is deferred to a follow-up spec.

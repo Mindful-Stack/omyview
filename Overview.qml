@@ -37,12 +37,11 @@ Item {
 
     OmyviewConfig { id: config }
 
-    // Chips (and their header band) only earn their space with several monitors.
-    readonly property bool multiMonitor:
-        (Hyprland.monitors && Hyprland.monitors.values ? Hyprland.monitors.values.length : 1) > 1
+    // headerH is the chip band per monitor group; logic.js lays it out only when more than
+    // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.
     readonly property var params: ({
         maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 3, cellSpacing: 6,
-        rowSpacing: 10, headerH: root.multiMonitor ? 22 : 0, minTileW: 8, minTileH: 6
+        rowSpacing: 10, headerH: 22, minTileW: 8, minTileH: 6
     })
 
     property var groups: []
@@ -539,10 +538,10 @@ Item {
                     }
 
                     // monitor chips layer (siblings, above boxes) — plain labels, one per group;
-                    // the focused monitor's label is accented. Only laid out with >1 monitor
-                    // (params.headerH is 0 otherwise, so the band collapses).
+                    // the focused monitor's label is accented. Shown only when the layout has
+                    // more than one group (then each group carries a non-zero header band).
                     Repeater {
-                        model: root.opened && root.multiMonitor ? root.groups : []
+                        model: root.opened && root.groups.length > 1 ? root.groups : []
                         Text {
                             required property var modelData
                             x: modelData.x + 4; y: modelData.y
@@ -656,6 +655,26 @@ Item {
                         Behavior on opacity { NumberAnimation { duration: 120 } }
                         Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                         Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                    }
+
+                    // drop wash: the workspace-level drop cue, drawn ABOVE the previews so a
+                    // fullscreen or densely tiled workspace cannot hide it. Shown while dragging
+                    // over a box whenever no tile-level insertion preview is showing (floating
+                    // drags, empty targets, grouped/fullscreen sources); the tinted well
+                    // underneath is only a secondary hint.
+                    Rectangle {
+                        id: dropWash
+                        readonly property var box:
+                            (root.draggingAddress !== "" && root.dropTargetAddress === "")
+                                ? root.boxForWs(root.dropTargetWs) : null
+                        visible: box !== null
+                        x: box ? box.x : 0; y: box ? box.y : 0
+                        width: box ? box.w : 0; height: box ? box.h : 0
+                        z: 60   // above resting/hovered tiles and the selection frame, below the ghost
+                        radius: root.boxRadius
+                        color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.22)
+                        border.width: 2
+                        border.color: root.accent
                     }
                 }
             }
