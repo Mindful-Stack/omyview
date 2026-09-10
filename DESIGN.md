@@ -180,8 +180,39 @@ fullscreen windows do nothing (grouped/fullscreen cross-workspace drops still tr
 none of these previews an insertion. The tile holds the drop point until fresh geometry
 differs from the pre-drop one.
 
+**Drag ghost and pointer targeting.** In transit the tile scales to 0.6 around the grab point
+(a `Scale` transform with its origin at the press position, so that point stays under the
+pointer and the ghost never covers the highlight) at 0.6 opacity, both animated. Tiled
+targeting — workspace hit, anchor tile and side — uses the pointer's canvas position (the
+edge-scroll viewport point plus scroll offset), matching the native drag where the cursor
+decides; the ghost's geometry is irrelevant to it. Floating placement still uses the ghost's
+unscaled top-left, i.e. "the point you grabbed lands under the pointer". A re-grab during the
+release animation (scale still ≠ 1) would displace the tile by (grab − oldOrigin)·(1 − scale)
+when the origin moves; `WindowTile.beginGrab` offsets x/y by exactly that, so the grabbed point
+never leaves the pointer.
+
 Verified with real Quickshell on a nested Lua Hyprland: a lower window dropped at the upper
 window's bottom edge of a vertical stack stays below it (the anchor doubles in height when the
 window detaches), insert left of / above the hovered window on the active workspace, and right
 of a window on a hidden workspace, with the active workspace, cursor and both config values
 unchanged afterwards.
+
+## Visual restyle (2026-09-10)
+
+Tone steps instead of outlines, end-4 style: a borderless card with its own radius and a soft
+`RectangularShadow` (`CardShadow.qml`), workspace wells filled with the menu text colour at the
+theme's `normalFillAlpha`, a large low-contrast numeral behind the windows, and one 2px accent
+selection frame that follows keyboard selection only (it recedes during a drag and never moves
+to the drop target). The drop cue is drawn above the previews: the tiled-insert half on the
+anchor tile when there is one, otherwise an accent wash over the target well. Tiles rest at
+scale 1 with only a 12 % hairline. Monitor chips are plain text; `Logic.layout` lays out their
+header band only when more than one monitor has workspaces. The scrim is configurable via
+`~/.config/omarchy/omyview.json` (`OmyviewConfig.qml`).
+Design: `docs/specs/2026-09-10-restyle-design.md`. Motion is deferred to a follow-up spec.
+
+## Workspace number badge (2026-09-10)
+
+Each box carries a small number chip in its top-left corner, drawn above the previews (card
+colour at 88 %, accent-filled for the focused workspace), so the 1–0 keys always have a visible
+anchor. The big low-contrast numeral is kept for empty workspaces only.
+Design: `docs/specs/2026-09-10-ws-badge-design.md`.

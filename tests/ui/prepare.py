@@ -8,7 +8,7 @@ source, dest = map(Path, sys.argv[1:])
 qml = (source / 'Overview.qml').read_text()
 qml = re.sub(r'^import (Quickshell.*|qs\..*)\n', '', qml, flags=re.M)
 qml = re.sub(r'Color\.menu\.\w+', '"#888888"', qml)
-qml = qml.replace('Style.cornerRadius', '8')
+qml = re.sub(r'Style\.\w+FillAlpha', '0.1', qml)
 qml = qml.replace('Hyprland.', 'compositor.').replace('target: Hyprland', 'target: compositor')
 qml = qml.replace('Quickshell.screens', '[]').replace('ToplevelManager.toplevels', 'null')
 qml = qml.replace('PanelWindow {', 'Item {')
@@ -18,6 +18,7 @@ qml = qml.replace('id: root', '''id: root
     property alias testModel: tilesModel
     property alias testFlick: flick
     property alias testCanvas: canvas
+    property alias testDropWash: dropWash
     property QtObject compositor: QtObject {
         property var monitors: ({values: []})
         property var workspaces: ({values: []})
@@ -41,3 +42,6 @@ end = tile.index('    // title label', start)
 tile = tile[:start] + '    Rectangle { anchors.fill: parent; color: tile.bg }\n\n' + tile[end:]
 (dest / 'WindowTile.qml').write_text(tile)
 (dest / 'logic.js').write_text((source / 'logic.js').read_text())
+# Shell-only helpers: the config loader needs Quickshell.Io, the shadow a GPU shader.
+(dest / 'OmyviewConfig.qml').write_text('import QtQuick\nQtObject { property bool scrim: true }\n')
+(dest / 'CardShadow.qml').write_text('import QtQuick\nItem { required property Item target }\n')

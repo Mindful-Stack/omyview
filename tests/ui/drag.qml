@@ -140,10 +140,12 @@ TestCase {
         mouseMove(tc,p.x+12,p.y+2,20)
         mouseMove(tc,edge.x,edge.y,20)
         var before=view.testFlick.contentY
-        var visual=t.mapToItem(tc,0,0)
+        // The grab point is the ghost's scale origin, so it is invariant under the in-transit
+        // shrink animation and is exactly the point that must stay under the pointer.
+        var visual=t.mapToItem(tc,t.grabX,t.grabY)
         wait(100)
         verify(view.testFlick.contentY > before, "Holding near the edge must scroll")
-        var after=t.mapToItem(tc,0,0)
+        var after=t.mapToItem(tc,t.grabX,t.grabY)
         verify(Math.abs(visual.y-after.y)<1, "Scrolling must keep the tile under the pointer")
         view.close()
         mouseRelease(tc,edge.x,edge.y,Qt.LeftButton)
@@ -248,6 +250,64 @@ TestCase {
         compare(view.compositor.commands.length,0)
         compare(tile().x,before)
     }
+    function test_ghost_shrinks_and_fades_while_dragging_and_restores() {
+        var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        mouseMove(tc,p.x+40,p.y+20,20)
+        wait(200)
+        fuzzyCompare(t.opacity,0.6,0.02,"translucent in transit")
+        fuzzyCompare(t.ghostScale,0.6,0.02,"shrunk in transit")
+        mouseRelease(tc,p.x+40,p.y+20,Qt.LeftButton)
+        wait(200)
+        fuzzyCompare(t.opacity,1,0.02,"opaque after release")
+        fuzzyCompare(t.ghostScale,1,0.02,"full size after release")
+    }
+    // The pointer picks the target and side, not the ghost's centre: grab the tile at its
+    // right edge (so the ghost's centre trails well left of the pointer, further still by the
+    // drag threshold) and point at the target's RIGHT quarter — centre-based targeting would
+    // say "left".
+    function test_pointer_not_ghost_centre_picks_target_and_side() {
+        addTarget(1)
+        var target=view.testModel.get(1), t=tile()
+        var g=t.mapToItem(tc,t.width-4,4)
+        mousePress(tc,g.x,g.y,Qt.LeftButton)
+        mouseMove(tc,g.x+12,g.y+2,20)
+        var goal=view.testCanvas.mapToItem(tc,target.wx+target.ww*0.9,target.wy+target.wh/2)
+        mouseMove(tc,goal.x,goal.y,20)
+        compare(view.dropTargetAddress,"0x456")
+        compare(view.dropTargetSide,"right")
+        verify(t.x+t.width/2 < target.wx+target.ww/2, "ghost centre is on the target's left half")
+        view.close()
+        mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
+    }
+    // Re-grabbing while the 100ms release animation is still running must not shift the tile:
+    // the Scale origin moves to the new grab point while the scale is still on its way back
+    // to 1, which would displace the rendered tile by (grab − oldOrigin)·(1 − scale).
+    function test_regrab_during_release_animation_keeps_grab_point_under_pointer() {
+        var t=tile(), g=t.mapToItem(tc,t.width-4,4)   // first grab: right edge
+        mousePress(tc,g.x,g.y,Qt.LeftButton)
+        mouseMove(tc,g.x+12,g.y+2,20)
+        mouseMove(tc,g.x+30,g.y+10,20)
+        mouseRelease(tc,g.x+30,g.y+10,Qt.LeftButton)
+        wait(30)                                        // release animation in flight
+        verify(t.ghostScale < 0.98, "precondition: still animating back to full size")
+        var g2=t.mapToItem(tc,4,4)                      // second grab: left edge, as rendered now
+        mousePress(tc,g2.x,g2.y,Qt.LeftButton)
+        var p=t.mapToItem(tc,t.grabX,t.grabY)
+        fuzzyCompare(p.x,g2.x,1,"grab point under the pointer right after the press")
+        fuzzyCompare(p.y,g2.y,1)
+        mouseMove(tc,g2.x+12,g2.y+2,20)                 // activates the drag
+        var off=t.mapToItem(tc,t.grabX,t.grabY)
+        var offX=off.x-(g2.x+12), offY=off.y-(g2.y+2)
+        mouseMove(tc,g2.x+40,g2.y+16,20)
+        wait(120)                                       // let the shrink animation finish
+        var after=t.mapToItem(tc,t.grabX,t.grabY)
+        fuzzyCompare(after.x-(g2.x+40),offX,1,"no jump-back when the drag activates or animates")
+        fuzzyCompare(after.y-(g2.y+16),offY,1)
+        view.close()
+        mouseRelease(tc,g2.x+40,g2.y+16,Qt.LeftButton)
+    }
     // A drag that never leaves the window's own slot is a no-op on release, so it must not
     // preview an insertion into another tile either: preview and release share one check.
     function test_short_drag_inside_own_slot_previews_nothing_and_dispatches_nothing() {
@@ -285,6 +345,71 @@ TestCase {
         addTarget(1); client.grouped=["0x123"]; view.rebuild()
         dragOntoTarget(1)
         compare(view.compositor.commands.length,0)
+    }
+    // Hover a floating drag over a workspace whose only window is fullscreen (its preview fills
+    // the well, hiding the well tint): the drop wash must show on that box, above the preview.
+    function test_floating_drag_over_fullscreen_workspace_shows_wash_above_preview() {
+        client.floating=true
+        var full={address:"0x456",at:[0,1440],size:[1920,1080],floating:false,
+                  title:"Full","class":"test",fullscreen:1}
+        view.compositor.workspaces.values[1].toplevels.values.push({lastIpcObject:full})
+        view.rebuild()
+        var wash=view.testDropWash, b=view.boxes[1]
+        verify(!wash.visible,"no wash before a drag")
+        var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        var goal=view.testCanvas.mapToItem(tc,b.x+b.w/2,b.y+b.h/2)
+        mouseMove(tc,goal.x,goal.y,20)
+        compare(view.dropTargetWs,2)
+        verify(wash.visible,"wash shows over the target box")
+        compare(wash.x,b.x); compare(wash.y,b.y); compare(wash.width,b.w)
+        var children=view.testCanvas.children, fullTile=null
+        for (var i=0;i<children.length;i++)
+            if (children[i].model && children[i].model.address==="0x456") fullTile=children[i]
+        verify(fullTile!==null && wash.z > fullTile.z,"wash stacks above the fullscreen preview")
+        view.close()
+        mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
+        verify(!wash.visible,"wash gone after release")
+    }
+    // A tiled drag with an insertion preview keeps the cue on the anchor tile: no wash.
+    function test_tiled_drag_with_insertion_preview_shows_no_wash() {
+        addTarget(1)
+        var target=view.testModel.get(1), t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        var goal=view.testCanvas.mapToItem(tc,target.wx+target.ww*0.9,target.wy+target.wh/2)
+        mouseMove(tc,goal.x,goal.y,20)
+        compare(view.dropTargetAddress,"0x456")
+        verify(!view.testDropWash.visible,"insertion preview replaces the wash")
+        view.close()
+        mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
+    }
+    function canvasItems(name) {
+        var out=[], children=view.testCanvas.children
+        for (var i=0;i<children.length;i++) if (children[i].objectName===name) out.push(children[i])
+        return out
+    }
+    // Every workspace carries a number badge stacked above its previews; the big numeral
+    // shows only on empty workspaces, where nothing can hide it.
+    function test_badge_on_every_box_above_tiles_numeral_only_when_empty() {
+        var badges=canvasItems("wsBadge")
+        compare(badges.length, view.boxes.length, "one badge per workspace box")
+        var t=tile()
+        for (var i=0;i<badges.length;i++) {
+            var b=view.boxes[i]
+            verify(badges[i].visible)
+            verify(badges[i].x >= b.x && badges[i].y >= b.y, "badge sits inside its box")
+            verify(badges[i].z > t.z, "badge stacks above a resting tile")
+        }
+        var numerals=[], boxes=view.testCanvas.children
+        for (var j=0;j<boxes.length;j++) {
+            var kids=boxes[j].children||[]
+            for (var k=0;k<kids.length;k++) if (kids[k].objectName==="wsNumeral") numerals.push(kids[k])
+        }
+        compare(numerals.length, 2)
+        verify(!numerals[0].visible, "occupied workspace 1 hides the big numeral")
+        verify(numerals[1].visible, "empty workspace 2 shows the big numeral")
     }
 
 }

@@ -18,18 +18,33 @@ Item {
     readonly property int selectedId:
         (selectedIndex >= 0 && selectedIndex < boxes.length) ? boxes[selectedIndex].workspaceId : -1
 
-    // theme
+    // theme — tone steps, not lines (see docs/specs/2026-09-10-restyle-design.md)
     property color background: Color.menu.background
     property color foreground: Color.menu.text
-    property color borderColor: Color.menu.border
     property color scrim: Color.menu.scrim
     property color selBackground: Color.menu.selectedBackground
     property color selText: Color.menu.selectedText
-    readonly property int cornerRadius: Style.cornerRadius
+    function tone(a) { return Qt.rgba(foreground.r, foreground.g, foreground.b, a) }
+    readonly property color wellColor: tone(Style.normalFillAlpha)      // workspace well
+    // Well under a drag: the only workspace-level drop cue (tiled drops also preview the
+    // insertion half on the anchor tile), so it must read even on the focused workspace.
+    readonly property color dropWellColor: tone(Style.selectedFillAlpha)
+    readonly property color hairline: tone(0.12)                          // between previews
+    readonly property color accent: selText
+    // Badge chip: the card colour, nearly opaque, so the number reads over any preview.
+    readonly property color badgeColor: Qt.rgba(background.r, background.g, background.b, 0.88)
+    function wsLabel(id) { return id === 10 ? "0" : String(id) }   // matches the 1–0 keys
+    // The card owns its radius: Style.cornerRadius mirrors Hyprland rounding, which may be 0.
+    readonly property int boxRadius: 8
+    readonly property int cardRadius: boxRadius + card.pad
 
+    OmyviewConfig { id: config }
+
+    // headerH is the chip band per monitor group; logic.js lays it out only when more than
+    // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.
     readonly property var params: ({
-        maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 6, cellSpacing: 8,
-        rowSpacing: 12, headerH: 22, minTileW: 8, minTileH: 6
+        maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 3, cellSpacing: 6,
+        rowSpacing: 10, headerH: 22, minTileW: 8, minTileH: 6
     })
 
     property var groups: []
@@ -156,15 +171,16 @@ Item {
             { anchor: plan.anchor, side: plan.side, x: fallback.x, y: fallback.y }))
         return true
     }
-    function submitDrop(addr, targetWs, dropX, dropY) {
+    function submitDrop(addr, targetWs, dropX, dropY, px, py) {
         var box = boxForWs(targetWs), mon = box ? _monByName[box.monitorName] : null
         var win = _windowByAddress[addr]
         if (!box || !mon || !win) return
         var sourceWs = win.workspaceId // model.wsid may still be optimistic
         var tile = tileRectFor(addr)
         if (!win.floating && !win.fullscreen && !win.grouped && tile) {
-            if (startTiledInsert(addr, win, targetWs, box, mon,
-                                 dropX + tile.w / 2, dropY + tile.h / 2, dropX, dropY)) {
+            var cx = px === undefined ? dropX + tile.w / 2 : px
+            var cy = py === undefined ? dropY + tile.h / 2 : py
+            if (startTiledInsert(addr, win, targetWs, box, mon, cx, cy, dropX, dropY)) {
                 scheduleRebuild()
                 reconcileTimer.restart()
             }
@@ -232,9 +248,14 @@ Item {
         }
         if (!Object.keys(pendingMoves).length) reconcileTimer.stop()
     }
+    // Pointer position in canvas coordinates during a drag (viewport point + scroll offset).
+    function dragPointer() {
+        return { x: dragViewportX + flick.contentX, y: dragViewportY + flick.contentY }
+    }
     function updateDropTarget() {
         if (!dragTile) { dropTargetWs = -1; dropTargetAddress = ""; dropTargetSide = ""; return }
-        var cx = dragTile.x + dragTile.width / 2, cy = dragTile.y + dragTile.height / 2
+        // The pointer decides (as the cursor does in a native drag); the tile is only a ghost.
+        var p = dragPointer(), cx = p.x, cy = p.y
         var ws = Logic.hitWorkspace(boxes, cx, cy)
         dropTargetWs = ws === null ? -1 : ws
         var win = _windowByAddress[draggingAddress]
@@ -416,17 +437,16 @@ Item {
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         exclusionMode: ExclusionMode.Ignore
 
-        Rectangle { anchors.fill: parent; color: root.scrim }
+        Rectangle { anchors.fill: parent; color: root.scrim; visible: config.scrim }
         MouseArea { anchors.fill: parent; onClicked: root.close() }
 
+        CardShadow { target: card }
         Rectangle {
             id: card
             anchors.centerIn: parent
-            radius: root.cornerRadius
+            radius: root.cardRadius
             color: root.background
-            border.width: 1
-            border.color: root.borderColor
-            readonly property int pad: 16
+            readonly property int pad: 12
             // Cap the card to the screen so the Flickable viewport can be smaller than the
             // content (`availCanvasW` already keeps canvas width <= this, minus the degenerate
             // narrow-screen case, which is expected to 2-D scroll per the spec).
@@ -499,18 +519,21 @@ Item {
                             readonly property bool isDrop: root.draggingAddress !== "" &&
                                                            modelData.workspaceId === root.dropTargetWs
                             x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h
-                            radius: 6
-                            color: modelData.focused ? root.selBackground : "transparent"
-                            border.width: (isDrop || isSel) ? 3 : (modelData.focused ? 2 : 1)
-                            border.color: isDrop ? root.selText : isSel ? root.foreground
-                                                : (modelData.focused ? root.selBackground : root.borderColor)
-                            opacity: (isDrop || modelData.occupied || modelData.focused) ? 1.0 : 0.5
+                            radius: root.boxRadius
+                            // a well sunk into the card; no outline
+                            color: isDrop ? root.dropWellColor
+                                 : modelData.focused ? root.selBackground : root.wellColor
 
+                            // big low-contrast numeral, only where nothing would hide it
                             Text {
+                                objectName: "wsNumeral"
                                 anchors.centerIn: parent
-                                text: modelData.workspaceId === 10 ? "0" : String(modelData.workspaceId)
-                                color: modelData.focused ? root.selText : root.foreground
-                                opacity: 0.25; font.pixelSize: 22
+                                visible: !modelData.occupied
+                                text: root.wsLabel(modelData.workspaceId)
+                                color: root.foreground
+                                opacity: 0.10
+                                font.pixelSize: Math.round(modelData.h * 0.45)
+                                font.weight: Font.DemiBold
                             }
                             MouseArea {   // click empty area of a workspace => jump
                                 anchors.fill: parent
@@ -519,27 +542,23 @@ Item {
                         }
                     }
 
-                    // monitor chips layer (siblings, above boxes) — one per group, focused
-                    // monitor's chip accented so multiple monitors are always distinguishable.
+                    // monitor chips layer (siblings, above boxes) — plain labels, one per group;
+                    // the focused monitor's label is accented. Shown only when the layout has
+                    // more than one group (then each group carries a non-zero header band).
                     Repeater {
-                        model: root.opened ? root.groups : []
-                        Rectangle {
+                        model: root.opened && root.groups.length > 1 ? root.groups : []
+                        Text {
                             required property var modelData
-                            x: modelData.x; y: modelData.y
-                            height: modelData.headerH - 4
-                            radius: 4
-                            readonly property color accent: root.selBackground
-                            color: modelData.focused ? accent : "transparent"
-                            border.width: 1
-                            border.color: modelData.focused ? accent : root.borderColor
-                            implicitWidth: chipText.implicitWidth + 12
-                            Text {
-                                id: chipText; anchors.centerIn: parent
-                                text: modelData.monitorName
-                                color: modelData.focused ? root.selText : root.foreground
-                                opacity: modelData.focused ? 1.0 : 0.6
-                                font.pixelSize: 11
-                            }
+                            x: modelData.x + 4; y: modelData.y
+                            height: modelData.headerH
+                            verticalAlignment: Text.AlignVCenter
+                            text: modelData.monitorName
+                            color: modelData.focused ? root.accent : root.foreground
+                            opacity: modelData.focused ? 1.0 : 0.55
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                            font.capitalization: Font.AllUppercase
+                            font.letterSpacing: 1
                         }
                     }
 
@@ -554,7 +573,7 @@ Item {
                             dragging: root.draggingAddress === model.address
                             handle: root.handleByAddress[model.address] || null
                             capMode: "live"
-                            borderColor: root.dropTargetAddress === model.address ? root.selText : root.borderColor
+                            borderColor: root.dropTargetAddress === model.address ? root.accent : root.hairline
                             dropTarget: root.dropTargetAddress === model.address
                             dropSide: root.dropTargetAddress === model.address ? root.dropTargetSide : ""
                             bg: root.background; fg: root.foreground
@@ -580,6 +599,7 @@ Item {
                                     if (m.button !== Qt.LeftButton) return
                                     // A second grab supersedes that address's pending visual state.
                                     delete root.pendingMoves[model.address]
+                                    windowTile.beginGrab(m.x, m.y)   // ghost shrinks around the grab point
                                     root.draggingAddress = model.address
                                     root.dragTile = windowTile
                                     moved = false
@@ -607,8 +627,9 @@ Item {
                                     root.updateDropTarget()
                                     var targetWs = root.dropTargetWs
                                     var dropX = windowTile.x, dropY = windowTile.y
+                                    var ptr = root.dragPointer()
                                     if (wasMoved && targetWs >= 0)
-                                        root.submitDrop(addr, targetWs, dropX, dropY)
+                                        root.submitDrop(addr, targetWs, dropX, dropY, ptr.x, ptr.y)
                                     root.endDrag()
                                     if (!wasMoved) {
                                         Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })')
@@ -618,6 +639,73 @@ Item {
                             }
                         }
                     }
+
+                    // badge layer (above tiles): the workspace number stays readable no matter
+                    // what the previews contain. One chip per box, top-left corner. Focused
+                    // workspace = accent chip. No mouse handling, so clicks fall through.
+                    Repeater {
+                        model: root.opened ? root.boxes : []
+                        Rectangle {
+                            required property var modelData
+                            objectName: "wsBadge"
+                            x: modelData.x + 6; y: modelData.y + 6
+                            z: 40   // above resting/hovered tiles, below the selection frame
+                            height: 18
+                            width: Math.max(height, badgeText.implicitWidth + 10)
+                            radius: 5
+                            color: modelData.focused ? root.accent : root.badgeColor
+                            Text {
+                                id: badgeText
+                                anchors.centerIn: parent
+                                text: root.wsLabel(modelData.workspaceId)
+                                color: modelData.focused ? root.background : root.foreground
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+
+                    // selection frame: the accent outline on the keyboard-selected box. Drags
+                    // never move it (keyboard selection and "where I just dropped a window" are
+                    // different intents); it only recedes while a drag is in progress.
+                    Rectangle {
+                        id: selectionFrame
+                        readonly property var box:
+                            (root.selectedIndex >= 0 && root.selectedIndex < root.boxes.length)
+                                ? root.boxes[root.selectedIndex] : null
+                        visible: box !== null
+                        x: box ? box.x : 0; y: box ? box.y : 0
+                        width: box ? box.w : 0; height: box ? box.h : 0
+                        z: 50   // above resting/hovered tiles, below the drag ghost
+                        radius: root.boxRadius
+                        color: "transparent"
+                        border.width: 2
+                        border.color: root.accent
+                        opacity: root.draggingAddress !== "" ? 0.4 : 1
+                        Behavior on opacity { NumberAnimation { duration: 120 } }
+                        Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                        Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                    }
+
+                    // drop wash: the workspace-level drop cue, drawn ABOVE the previews so a
+                    // fullscreen or densely tiled workspace cannot hide it. Shown while dragging
+                    // over a box whenever no tile-level insertion preview is showing (floating
+                    // drags, empty targets, grouped/fullscreen sources); the tinted well
+                    // underneath is only a secondary hint.
+                    Rectangle {
+                        id: dropWash
+                        readonly property var box:
+                            (root.draggingAddress !== "" && root.dropTargetAddress === "")
+                                ? root.boxForWs(root.dropTargetWs) : null
+                        visible: box !== null
+                        x: box ? box.x : 0; y: box ? box.y : 0
+                        width: box ? box.w : 0; height: box ? box.h : 0
+                        z: 60   // above resting/hovered tiles and the selection frame, below the ghost
+                        radius: root.boxRadius
+                        color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.22)
+                        border.width: 2
+                        border.color: root.accent
+                    }
                 }
             }
 
@@ -625,7 +713,7 @@ Item {
                 id: hint
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 8 }
                 text: "1–0 jump · arrows move · Enter select · drag a window · Esc close"
-                color: root.foreground; opacity: 0.5; font.pixelSize: 11
+                color: root.foreground; opacity: 0.4; font.pixelSize: 11
             }
         }
     }

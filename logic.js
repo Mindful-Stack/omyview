@@ -83,13 +83,15 @@ function layout(input) {
     }
     for (var mn in wsByMon) wsByMon[mn].sort(function (a, b) { return a.id - b.id })
 
+    // The monitor-chip band only earns its height when more than one monitor has workspaces.
+    var headerH = order.length > 1 ? P.headerH : 0
     var boxes = [], boxByWs = {}, groups = [], y = 0, canvasW = 0
     for (var r = 0; r < order.length; r++) {
         var name = order[r], wss = wsByMon[name] || []
         if (!wss.length) continue
         var focusedGroup = name === input.focusedMonitorName
-        groups.push({ monitorName: name, x: 0, y: y, headerH: P.headerH, focused: focusedGroup })
-        y += P.headerH
+        groups.push({ monitorName: name, x: 0, y: y, headerH: headerH, focused: focusedGroup })
+        y += headerH
         for (var s = 0; s < wss.length; s += cols) {
             var chunk = wss.slice(s, s + cols)
             for (var c = 0; c < chunk.length; c++) {

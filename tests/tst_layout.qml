@@ -36,10 +36,11 @@ TestCase {
             windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
         compare(r.cell.cols, 5); compare(r.cell.w, 320); compare(r.cell.h, 200)
         var b1=boxById(r,1), b2=boxById(r,2)
-        compare(b1.x,0);   compare(b1.y,22)            // below the headerH header
+        compare(b1.x,0);   compare(b1.y,0)             // single monitor: no header band
         compare(b2.x,328)                              // 320 + 8 gap
         compare(r.canvasSize.w, 976)                   // 3*320 + 2*8
-        compare(r.canvasSize.h, 222)                   // headerH 22 + ch 200
+        compare(r.canvasSize.h, 200)                   // ch 200, no header
+        compare(r.groups.length, 1); compare(r.groups[0].headerH, 0)
     }
     // narrow screen: fewer columns, never wider than availW
     function test_narrow_adaptive_cols_no_overflow() {
@@ -72,10 +73,10 @@ TestCase {
         var wss=[]; for (var i=1;i<=7;i++) wss.push({id:i,monitorName:"eDP-1",focused:i===1,occupied:true})
         var r = Logic.layout({ monitors:[edp()], workspaces:wss, windows:[],
             focusedMonitorName:"eDP-1", availW:1632, params:params })
-        compare(boxById(r,5).y, 22)                    // first sub-row
+        compare(boxById(r,5).y, 0)                     // first sub-row (no header: one monitor)
         compare(boxById(r,6).x, 0)                     // second sub-row, first column
-        compare(boxById(r,6).y, 234)                   // 22 + ch200 + rowSpacing12
-        compare(r.canvasSize.h, 434)                   // 22 + 200 + 12 + 200
+        compare(boxById(r,6).y, 212)                   // ch200 + rowSpacing12
+        compare(r.canvasSize.h, 412)                   // 200 + 12 + 200
     }
     // two monitors stack, focused group first, groups metadata present
     function test_two_monitor_groups() {
@@ -85,8 +86,18 @@ TestCase {
             windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
         compare(r.groups.length, 2)
         compare(r.groups[0].monitorName, "eDP-1"); verify(r.groups[0].focused)
-        compare(r.groups[0].y, 0); compare(r.groups[1].y, 234)   // eDP header0+row → 222, +rowSpacing12
+        compare(r.groups[0].y, 0); compare(r.groups[1].y, 234)   // eDP header22+row200 → 222, +rowSpacing12
+        compare(r.groups[0].headerH, 22)               // two monitors: header band laid out
+        compare(boxById(r,1).y, 22)
         verify(boxById(r,1).y < boxById(r,6).y)
+    }
+    // A monitor without workspaces forms no group, so it must not bring the header band with it.
+    function test_header_band_needs_two_monitors_with_workspaces() {
+        var r = Logic.layout({ monitors:[edp(),hdmi()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true}],
+            windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        compare(r.groups.length, 1)
+        compare(r.groups[0].headerH, 0); compare(boxById(r,1).y, 0)
     }
 
     function test_skips_negative_workspace_ids() {
@@ -200,10 +211,12 @@ TestCase {
     }
 
     function test_hit_workspace() {
-        var r = Logic.layout({ monitors: [edp()],
+        // two monitors so the header band exists (it must be a dead zone for hits)
+        var r = Logic.layout({ monitors: [edp(), hdmi()],
             workspaces: [
                 { id: 1, monitorName: "eDP-1", focused: true,  occupied: true },
-                { id: 2, monitorName: "eDP-1", focused: false, occupied: false }
+                { id: 2, monitorName: "eDP-1", focused: false, occupied: false },
+                { id: 6, monitorName: "HDMI-A-1", focused: false, occupied: false }
             ], windows: [], focusedMonitorName: "eDP-1", availW: 1632, params: params })
         var b2 = boxById(r, 2)
         // centre of box 2 => ws 2 (cell is 320x200)

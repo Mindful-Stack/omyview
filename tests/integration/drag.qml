@@ -22,7 +22,7 @@ ShellRoot {
             var box = overview.boxForWs(workspace), mon = overview._monByName[box.monitorName]
             var t = overview.tileRectFor(address)
             var r = Logic._tileRect({ax:gx, ay:gy, sw:1, sh:1}, mon, box, overview.params)
-            overview.submitDrop(address, workspace, r.x - t.w / 2, r.y - t.h / 2)
+            overview.submitDrop(address, workspace, r.x - t.w / 2, r.y - t.h / 2, r.x, r.y)
         }
         function openOverview(): void { overview.open() }
         function pending(): string { return JSON.stringify(overview.pendingMoves) }

@@ -22,17 +22,48 @@ Item {
     readonly property bool wantCapture: handle !== null && capMode !== "icon"
     readonly property string iconUrl: Quickshell.iconPath(String(cls).toLowerCase(), true)
 
+    // Drag ghost: while in transit the tile shrinks around the grabbed point (so that point stays
+    // under the pointer and the ghost never hides the drop highlight) and turns translucent.
+    // The pointer, not the ghost, decides where a tiled window lands.
+    property real grabX: width / 2         // grab point in tile coords, set by Overview at press
+    property real grabY: height / 2
+    readonly property real dragScale: 0.6
+    readonly property real dragOpacity: 0.6
+    readonly property alias ghostScale: ghost.xScale
+
+    // Record a new grab point. If the release animation is still running (scale ≠ 1), moving
+    // the Scale origin would displace the rendered tile by (grab − oldOrigin)·(1 − scale) —
+    // a re-grab during those 100ms would jump. Offset x/y by exactly that amount so the grabbed
+    // point stays where the pointer pressed; the drag takes over x/y from here and Overview
+    // rebinds them on release.
+    function beginGrab(gx, gy) {
+        var s = ghost.xScale
+        if (s !== 1) { x -= (gx - grabX) * (1 - s); y -= (gy - grabY) * (1 - s) }
+        grabX = gx; grabY = gy
+    }
+
     HoverHandler { id: hh; enabled: !tile.dragging }
-    scale: dragging ? 1 : (hh.hovered ? 1.05 : 0.95)
+    scale: dragging ? 1 : (hh.hovered ? 1.03 : 1)
     transformOrigin: Item.Center
     z: dragging ? 99999 : (hh.hovered ? 10 : 0)
+    opacity: dragging ? dragOpacity : 1
     Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
+    Behavior on opacity { NumberAnimation { duration: 100 } }
+    transform: Scale {
+        id: ghost
+        origin.x: tile.grabX; origin.y: tile.grabY
+        xScale: tile.dragging ? tile.dragScale : 1
+        yScale: xScale
+        Behavior on xScale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
+    }
 
     ClippingRectangle {
         anchors.fill: parent
         color: tile.bg
-        radius: 6
-        border.width: tile.dropTarget ? 3 : 1
+        radius: 5   // box radius (8) minus the cell inset (3): concentric with the well
+        // no outline at rest beyond a faint hairline (adjacent previews with zero Hyprland
+        // gaps would otherwise merge); the accent border marks the tiled-insert anchor
+        border.width: tile.dropTarget ? 2 : 1
         border.color: tile.borderColor
 
         ScreencopyView {
