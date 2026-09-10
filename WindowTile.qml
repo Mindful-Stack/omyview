@@ -43,7 +43,7 @@ Item {
     }
 
     HoverHandler { id: hh; enabled: !tile.dragging }
-    scale: dragging ? 1 : (hh.hovered ? 1.05 : 0.95)
+    scale: dragging ? 1 : (hh.hovered ? 1.03 : 1)
     transformOrigin: Item.Center
     z: dragging ? 99999 : (hh.hovered ? 10 : 0)
     opacity: dragging ? dragOpacity : 1
@@ -60,8 +60,10 @@ Item {
     ClippingRectangle {
         anchors.fill: parent
         color: tile.bg
-        radius: 6
-        border.width: tile.dropTarget ? 3 : 1
+        radius: 5   // box radius (8) minus the cell inset (3): concentric with the well
+        // no outline at rest beyond a faint hairline (adjacent previews with zero Hyprland
+        // gaps would otherwise merge); the accent border marks the tiled-insert anchor
+        border.width: tile.dropTarget ? 2 : 1
         border.color: tile.borderColor
 
         ScreencopyView {

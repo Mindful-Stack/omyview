@@ -18,18 +18,31 @@ Item {
     readonly property int selectedId:
         (selectedIndex >= 0 && selectedIndex < boxes.length) ? boxes[selectedIndex].workspaceId : -1
 
-    // theme
+    // theme — tone steps, not lines (see docs/specs/2026-09-10-restyle-design.md)
     property color background: Color.menu.background
     property color foreground: Color.menu.text
-    property color borderColor: Color.menu.border
     property color scrim: Color.menu.scrim
     property color selBackground: Color.menu.selectedBackground
     property color selText: Color.menu.selectedText
-    readonly property int cornerRadius: Style.cornerRadius
+    function tone(a) { return Qt.rgba(foreground.r, foreground.g, foreground.b, a) }
+    readonly property color wellColor: tone(Style.normalFillAlpha)      // workspace well
+    // Well under a drag: the only workspace-level drop cue (tiled drops also preview the
+    // insertion half on the anchor tile), so it must read even on the focused workspace.
+    readonly property color dropWellColor: tone(Style.selectedFillAlpha)
+    readonly property color hairline: tone(0.12)                          // between previews
+    readonly property color accent: selText
+    // The card owns its radius: Style.cornerRadius mirrors Hyprland rounding, which may be 0.
+    readonly property int boxRadius: 8
+    readonly property int cardRadius: boxRadius + card.pad
 
+    OmyviewConfig { id: config }
+
+    // Chips (and their header band) only earn their space with several monitors.
+    readonly property bool multiMonitor:
+        (Hyprland.monitors && Hyprland.monitors.values ? Hyprland.monitors.values.length : 1) > 1
     readonly property var params: ({
-        maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 6, cellSpacing: 8,
-        rowSpacing: 12, headerH: 22, minTileW: 8, minTileH: 6
+        maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 3, cellSpacing: 6,
+        rowSpacing: 10, headerH: root.multiMonitor ? 22 : 0, minTileW: 8, minTileH: 6
     })
 
     property var groups: []
@@ -422,17 +435,16 @@ Item {
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         exclusionMode: ExclusionMode.Ignore
 
-        Rectangle { anchors.fill: parent; color: root.scrim }
+        Rectangle { anchors.fill: parent; color: root.scrim; visible: config.scrim }
         MouseArea { anchors.fill: parent; onClicked: root.close() }
 
+        CardShadow { target: card }
         Rectangle {
             id: card
             anchors.centerIn: parent
-            radius: root.cornerRadius
+            radius: root.cardRadius
             color: root.background
-            border.width: 1
-            border.color: root.borderColor
-            readonly property int pad: 16
+            readonly property int pad: 12
             // Cap the card to the screen so the Flickable viewport can be smaller than the
             // content (`availCanvasW` already keeps canvas width <= this, minus the degenerate
             // narrow-screen case, which is expected to 2-D scroll per the spec).
@@ -505,18 +517,19 @@ Item {
                             readonly property bool isDrop: root.draggingAddress !== "" &&
                                                            modelData.workspaceId === root.dropTargetWs
                             x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h
-                            radius: 6
-                            color: modelData.focused ? root.selBackground : "transparent"
-                            border.width: (isDrop || isSel) ? 3 : (modelData.focused ? 2 : 1)
-                            border.color: isDrop ? root.selText : isSel ? root.foreground
-                                                : (modelData.focused ? root.selBackground : root.borderColor)
-                            opacity: (isDrop || modelData.occupied || modelData.focused) ? 1.0 : 0.5
+                            radius: root.boxRadius
+                            // a well sunk into the card; no outline
+                            color: isDrop ? root.dropWellColor
+                                 : modelData.focused ? root.selBackground : root.wellColor
 
+                            // big low-contrast numeral behind the windows
                             Text {
                                 anchors.centerIn: parent
                                 text: modelData.workspaceId === 10 ? "0" : String(modelData.workspaceId)
-                                color: modelData.focused ? root.selText : root.foreground
-                                opacity: 0.25; font.pixelSize: 22
+                                color: root.foreground
+                                opacity: 0.10
+                                font.pixelSize: Math.round(modelData.h * 0.45)
+                                font.weight: Font.DemiBold
                             }
                             MouseArea {   // click empty area of a workspace => jump
                                 anchors.fill: parent
@@ -525,27 +538,23 @@ Item {
                         }
                     }
 
-                    // monitor chips layer (siblings, above boxes) — one per group, focused
-                    // monitor's chip accented so multiple monitors are always distinguishable.
+                    // monitor chips layer (siblings, above boxes) — plain labels, one per group;
+                    // the focused monitor's label is accented. Only laid out with >1 monitor
+                    // (params.headerH is 0 otherwise, so the band collapses).
                     Repeater {
-                        model: root.opened ? root.groups : []
-                        Rectangle {
+                        model: root.opened && root.multiMonitor ? root.groups : []
+                        Text {
                             required property var modelData
-                            x: modelData.x; y: modelData.y
-                            height: modelData.headerH - 4
-                            radius: 4
-                            readonly property color accent: root.selBackground
-                            color: modelData.focused ? accent : "transparent"
-                            border.width: 1
-                            border.color: modelData.focused ? accent : root.borderColor
-                            implicitWidth: chipText.implicitWidth + 12
-                            Text {
-                                id: chipText; anchors.centerIn: parent
-                                text: modelData.monitorName
-                                color: modelData.focused ? root.selText : root.foreground
-                                opacity: modelData.focused ? 1.0 : 0.6
-                                font.pixelSize: 11
-                            }
+                            x: modelData.x + 4; y: modelData.y
+                            height: modelData.headerH
+                            verticalAlignment: Text.AlignVCenter
+                            text: modelData.monitorName
+                            color: modelData.focused ? root.accent : root.foreground
+                            opacity: modelData.focused ? 1.0 : 0.55
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                            font.capitalization: Font.AllUppercase
+                            font.letterSpacing: 1
                         }
                     }
 
@@ -560,7 +569,7 @@ Item {
                             dragging: root.draggingAddress === model.address
                             handle: root.handleByAddress[model.address] || null
                             capMode: "live"
-                            borderColor: root.dropTargetAddress === model.address ? root.selText : root.borderColor
+                            borderColor: root.dropTargetAddress === model.address ? root.accent : root.hairline
                             dropTarget: root.dropTargetAddress === model.address
                             dropSide: root.dropTargetAddress === model.address ? root.dropTargetSide : ""
                             bg: root.background; fg: root.foreground
@@ -626,6 +635,28 @@ Item {
                             }
                         }
                     }
+
+                    // selection frame: the accent outline on the keyboard-selected box. Drags
+                    // never move it (keyboard selection and "where I just dropped a window" are
+                    // different intents); it only recedes while a drag is in progress.
+                    Rectangle {
+                        id: selectionFrame
+                        readonly property var box:
+                            (root.selectedIndex >= 0 && root.selectedIndex < root.boxes.length)
+                                ? root.boxes[root.selectedIndex] : null
+                        visible: box !== null
+                        x: box ? box.x : 0; y: box ? box.y : 0
+                        width: box ? box.w : 0; height: box ? box.h : 0
+                        z: 50   // above resting/hovered tiles, below the drag ghost
+                        radius: root.boxRadius
+                        color: "transparent"
+                        border.width: 2
+                        border.color: root.accent
+                        opacity: root.draggingAddress !== "" ? 0.4 : 1
+                        Behavior on opacity { NumberAnimation { duration: 120 } }
+                        Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                        Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                    }
                 }
             }
 
@@ -633,7 +664,7 @@ Item {
                 id: hint
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 8 }
                 text: "1–0 jump · arrows move · Enter select · drag a window · Esc close"
-                color: root.foreground; opacity: 0.5; font.pixelSize: 11
+                color: root.foreground; opacity: 0.4; font.pixelSize: 11
             }
         }
     }

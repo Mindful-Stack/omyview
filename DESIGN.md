@@ -196,3 +196,13 @@ window's bottom edge of a vertical stack stays below it (the anchor doubles in h
 window detaches), insert left of / above the hovered window on the active workspace, and right
 of a window on a hidden workspace, with the active workspace, cursor and both config values
 unchanged afterwards.
+
+## Visual restyle (2026-09-10)
+
+Tone steps instead of outlines, end-4 style: a borderless card with its own radius and a soft
+`RectangularShadow` (`CardShadow.qml`), workspace wells filled with the menu text colour at the
+theme's `normalFillAlpha`, a large low-contrast numeral behind the windows, and one 2px accent
+selection frame that follows keyboard selection or the drag's drop target. Tiles rest at scale 1
+with only a 12 % hairline. Monitor chips are plain text and only laid out with more than one
+monitor. The scrim is configurable via `~/.config/omarchy/omyview.json` (`OmyviewConfig.qml`).
+Design: `docs/specs/2026-09-10-restyle-design.md`. Motion is deferred to a follow-up spec.

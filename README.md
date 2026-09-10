@@ -123,13 +123,21 @@ omarchy plugin remove se.mindfulstack.omyview
 
 ## Configuration
 
-`Overview.qml` exposes a `params` object near the top — cell size and spacing for the
-mini-maps (`cellW`, `cellH`, `cellInset`, `cellSpacing`, `rowSpacing`, `rowLabelH`, and the
-`minTileW`/`minTileH` clamps). Adjust these to make the tiles larger/denser.
+Optional user settings live in `~/.config/omarchy/omyview.json` (watched; edits apply live):
 
-Every workspace is shown (empties dimmed), and each window renders as a live thumbnail with
-an app-icon fallback. After editing, run `omarchy restart shell` (see the note in Contributing
-about why a plain rescan isn't enough).
+```json
+{
+  "scrim": true
+}
+```
+
+- `scrim` — dim the desktop behind the picker while it is open (default `true`).
+
+Colours follow the active Omarchy theme (`menu` surface roles and the shared fill alphas), so
+the picker re-themes with everything else. Layout constants live in the `params` object near
+the top of `Overview.qml` (cell size caps, `cellInset`, `cellSpacing`, `rowSpacing`, the
+`minTileW`/`minTileH` clamps). After editing QML, run `omarchy restart shell` (see the note in
+Contributing about why a plain rescan isn't enough).
 
 ---
 
