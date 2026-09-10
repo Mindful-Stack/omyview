@@ -562,3 +562,37 @@ function edgeScrollDelta(pointer, viewport, offset, content, elapsedMs) {
     else if (pointer > viewport - band) velocity = Math.min(1, (pointer - viewport + band) / band)
     return Math.max(0, Math.min(limit, offset + velocity * 900 * elapsedMs / 1000)) - offset
 }
+
+// ---- motion policy and user config ----
+
+// "auto" follows Hyprland's animations:enabled; "full" / "off" override it. Unknown values
+// are "auto", so a typo in omyview.json never freezes the picker.
+function motionPolicy(configured, hyprAnimations) {
+    if (configured === "full" || configured === "off") return configured
+    return hyprAnimations ? "full" : "off"
+}
+
+// Parse `hyprctl -j getoption animations:enabled`. Hyprland 0.56 reports {"bool": true};
+// older builds reported {"int": 1}. Anything unreadable counts as enabled: a failed probe
+// must not lose motion.
+function hyprAnimationsEnabled(json) {
+    var o = null
+    try { o = JSON.parse(String(json || "")) } catch (e) { return true }
+    if (!o || typeof o !== "object") return true
+    if (typeof o["bool"] === "boolean") return o["bool"]
+    if (typeof o["int"] === "number") return o["int"] !== 0
+    return true
+}
+
+// ~/.config/omarchy/omyview.json → a fully-defaulted settings object. Every key has a default;
+// a missing file, a parse error, a wrong type or an unknown key never changes behaviour.
+function parseConfig(raw) {
+    var o = {}
+    try { o = JSON.parse(String(raw || "")) || {} } catch (e) { o = {} }
+    if (typeof o !== "object") o = {}
+    return {
+        scrim: (typeof o.scrim === "boolean") ? o.scrim : true,
+        hint: (typeof o.hint === "boolean") ? o.hint : true,
+        motion: (o.motion === "full" || o.motion === "off") ? o.motion : "auto"
+    }
+}
