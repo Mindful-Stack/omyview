@@ -1,0 +1,137 @@
+# Omyview — find: type-ahead window search (design)
+
+Date: 2026-09-11 · Target: Omarchy Quattro, Hyprland 0.56.2 (Lua config mode), Quickshell 0.3.1 ·
+builds on v2 + window states + monitor groups (`main` at `17d3dec`).
+Status: **approved design, pre-implementation.** Branch `find`.
+
+## Goal
+
+Locate a window by name when many look alike. Press SUPER+P, type `slack`, press Enter: the Slack
+window is highlighted while typing, and Enter focuses it (switching workspace and raising it).
+
+## Scope
+
+**In:** type-ahead filtering on any printable key (no explicit find mode), fuzzy ranking over
+class and title, highlight + dim, cycling between matches, a find bar in the hint row, Enter
+focuses the selected match, Esc clears the query, tests.
+
+**Out:** windows on `special:` workspaces (the scratchpad stays excluded from the overview and
+therefore from find), cursor editing / paste in the query, matching on workspace names, persisting
+a query across summons, any action on bare letters. Ctrl+letter chords are **reserved** for
+future actions (scratchpad toggle, workspace lock) and are ignored by this feature.
+
+## Decisions (brainstorm 2026-09-11)
+
+- **No mode.** Any letter starts the query; the query being non-empty is what changes the keys.
+  Esc with a query clears it, Esc without one closes — "unwind one level" without a level
+  variable. Chosen over an explicit `F` mode because the common path is one keystroke shorter and
+  needs no mode indicator; the cost is that bare letters are no longer available as action keys.
+- **Digits jump while the query is empty**, and are query characters once a letter has been typed.
+- **Space never starts a query**; it appends once a query exists.
+- **Enter focuses the window** (`hl.dsp.focus({ window = "address:…" })`, the tile-click path),
+  not just its workspace — a floating or covered match is raised too.
+- **Cycling is by rank**, not spatially: with a query, all four arrows and Tab/Shift+Tab step
+  through the ranked matches.
+- **The find bar replaces the hint row** at the bottom of the card; no card resize, no layout
+  shift.
+
+## Behaviour
+
+Keys, by whether `query` is empty:
+
+| Key                       | query empty                         | query non-empty                          |
+|---------------------------|-------------------------------------|------------------------------------------|
+| letter / punctuation      | starts the query                    | appends                                  |
+| space                     | ignored                             | appends                                  |
+| digit                     | jump to workspace (1–9, 0 = 10)     | appends                                  |
+| Backspace                 | nothing                             | deletes the last character               |
+| Ctrl+Backspace            | nothing                             | clears the query                         |
+| Esc                       | close the overlay                   | clear the query                          |
+| Enter                     | jump to the selected workspace      | focus the selected match's window, close |
+| Down / Right / Tab        | spatial box navigation (Tab: none)  | next match by rank (wraps)               |
+| Up / Left / Shift+Tab     | spatial box navigation (Tab: none)  | previous match by rank (wraps)           |
+| Ctrl+letter               | ignored (reserved)                  | ignored (reserved)                       |
+
+"Printable" is a key event with non-empty `text` and no Ctrl/Alt/Meta modifier. Enter with a query
+but no match does nothing. Mouse behaviour is unchanged: a tile click focuses that window, a box
+click jumps, a drag moves — all regardless of the query.
+
+Clearing the query (Esc, Ctrl+Backspace, or deleting the last character) returns the box
+selection to where it was before the query started, if that workspace still exists; otherwise to
+the focused workspace, as `rebuild()` already does.
+
+## Matching — `Logic.findMatches(query, windows)`
+
+Pure function in `logic.js`, Tier 1 unit-tested. Input: the query and the window list that
+`buildInput()` already produces (`{ address, cls, title, … }`, special workspaces already
+excluded), in layout order. Output: an array of `{ address, score }`, best first; empty for an
+empty query.
+
+- **Subsequence match**, case-insensitive: every query character must occur in order in the
+  haystack. A window matches if either its class or its title matches.
+- **Score** (higher is better) = best of the class score and the title score, where each is the
+  sum of per-character bonuses: consecutive with the previous match, at the start of the haystack,
+  or at the start of a word (after space, `-`, `_`, `.`, `/`, `:`); minus a small length penalty
+  so a shorter haystack wins a tie. The class score carries a fixed bonus so `slack` ranks the
+  Slack window above a browser tab titled "Slack alternatives".
+- **Stable**: ties keep layout order, so the ranking does not jitter while typing.
+- Query characters are matched against the haystack lowercased; no diacritic folding (out of
+  scope; `åäö` are matched literally).
+
+## Visuals (query non-empty)
+
+- **Tiles.** A matching tile draws an accent outline (the existing `borderColor` input); the
+  selected match draws it at 2 px and the selection frame moves to that match's workspace box.
+  Non-matching tiles fade to 0.35 opacity. Both changes animate with `motion.fast` / `motion.hover`
+  and are instant with motion off.
+- **Find bar.** The hint `Row` at the bottom of the card is replaced (same anchors, same height
+  budget) by a `FindBar` item: a search glyph, the query text, and `n of m` right-aligned
+  (`n` = selected rank 1-based, `m` = match count). With the query empty the hint row returns,
+  carrying one new hint `type · find`. If `config.hint` is off, the card reserves no hint space
+  normally but grows by the bar height while a query is active — the bar is the only place the
+  query is visible, so it is never suppressed.
+- **No match.** The bar shows the query in the muted foreground and `0 matches`; no tile is
+  highlighted, tiles are still dimmed (the query is active), the selection frame stays where it
+  was, Enter does nothing.
+
+## State and data flow
+
+`Overview` gains:
+
+- `query: string` — cleared in `open()`.
+- `matches: var` — ranked addresses from `Logic.findMatches`.
+- `matchIndex: int` — index into `matches`, -1 when none.
+- `preQuerySelectedId: int` — the box selection to restore when the query clears.
+
+`setQuery(q)` recomputes `matches` from `_windowByAddress` (the last `buildInput()` result), clamps
+`matchIndex` (keeps the current address if it is still a match, else 0, else -1), updates the
+tile roles `matched` and `selectedMatch` via `setTileRoles`, and moves `selectedIndex` to the
+selected match's box. `rebuild()` calls the same recompute after `applyTiles`, so windows opening
+or closing while a query is active re-rank; a vanished selected match falls to the next by rank,
+and to the box selection when none remain. Enter dispatches
+`hl.dsp.focus({ window = "address:<addr>" })` and `root.close()` — the same two lines the tile
+click uses.
+
+`FindBar.qml` is display-only: properties `query`, `count`, `index`, `active`, plus theme
+inputs; no key handling, no focus. The key catcher remains the single focus item.
+
+## Edge cases
+
+- `open()` resets `query`, `matches`, `matchIndex`; a kept-loaded overlay never shows a stale
+  filter.
+- A drag with a query active behaves as today; the drop-target highlight takes precedence over the
+  match outline on that one tile while the drag lasts.
+- The selection frame never leaves the current match on a rebuild unless that window is gone.
+- Hyprland forwards SUPER chords over the overlay's exclusive focus (verified in v1), so SUPER+P
+  still toggles the overlay mid-query.
+
+## Tests
+
+- **Tier 1, `tests/tst_find.qml`**: `findMatches` — subsequence and non-match, case-insensitivity,
+  consecutive and word-start bonuses, class bonus over title, shorter-haystack tie-break, stable
+  order for equal scores, empty query → empty result, special-workspace windows never present
+  (input contract).
+- **Tier 1, offscreen UI (`tests/ui/`)**: typing through the key catcher sets `matched` /
+  `selectedMatch` roles and the bar text; Tab cycles; Esc clears the query and restores the box
+  selection; a second Esc closes; a digit jumps with an empty query and appends with a query.
+- **Tier 2**: nothing new.
