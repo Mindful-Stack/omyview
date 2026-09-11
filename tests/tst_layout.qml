@@ -7,7 +7,7 @@ TestCase {
 
     readonly property var params: ({
         maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 6, cellSpacing: 8,
-        rowSpacing: 12, headerH: 22, minTileW: 8, minTileH: 6, slotGapTolerance: 24
+        rowSpacing: 12, headerH: 22, groupInset: 6, minTileW: 8, minTileH: 6, slotGapTolerance: 24
     })
 
     // eDP-1: 2560x1600 @1.25 => 2048x1280 logical; 26px top bar reserved.
@@ -53,6 +53,27 @@ TestCase {
         compare(r.cell.cols, 4)                        // floor((600+8)/148)=4, capped at 5 (n/a)
         compare(r.canvasSize.w, 600)                    // full row: 4*144 + 3*8 = 600 = availW
     }
+    // Hyprland only reports workspaces it has created; padding fills in the 1–0 keys' targets
+    // as empty wells on the focused monitor, keeps real ones verbatim, and sorts into place.
+    function test_pad_workspaces_fills_missing_ids_on_focused_monitor() {
+        var real = [{id:1,monitorName:"eDP-1",focused:true,occupied:true},
+                    {id:6,monitorName:"HDMI-A-1",focused:false,occupied:true}]
+        var padded = Logic.padWorkspaces(real, 10, "eDP-1")
+        compare(padded.length, 10); compare(real.length, 2)          // input untouched
+        var ten = null; for (var i = 0; i < padded.length; i++) if (padded[i].id === 10) ten = padded[i]
+        compare(ten.monitorName, "eDP-1"); compare(ten.occupied, false); compare(ten.focused, false)
+        compare(padded[1].monitorName, "HDMI-A-1")                    // real ws 6 kept as-is
+        var r = Logic.layout({ monitors:[edp(), hdmi()], workspaces: padded,
+            windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        compare(r.boxes.length, 10)
+        var ids = []; for (var b = 0; b < 9; b++) ids.push(r.boxes[b].workspaceId)
+        compare(ids, [1,2,3,4,5,7,8,9,10])                            // eDP-1 group first, sorted
+        compare(r.boxes[9].workspaceId, 6)
+        compare(boxById(r, 10).occupied, false)
+        // off switch and no focused monitor: nothing synthesized
+        compare(Logic.padWorkspaces(real, 0, "eDP-1").length, 2)
+        compare(Logic.padWorkspaces(real, 10, "").length, 2)
+    }
     // missing/invalid availW must not corrupt geometry into NaN — degraded but usable
     function test_missing_availw_yields_safe_default() {
         var r = Logic.layout({ monitors:[edp()],
@@ -78,7 +99,8 @@ TestCase {
         compare(boxById(r,6).y, 212)                   // ch200 + rowSpacing12
         compare(r.canvasSize.h, 412)                   // 200 + 12 + 200
     }
-    // two monitors stack, focused group first, groups metadata present
+    // two monitors stack, lowest workspace id first; each group is inset with a chip band and carries
+    // its full bounds, so the view can put a backdrop behind the focused one
     function test_two_monitor_groups() {
         var r = Logic.layout({ monitors:[edp(),hdmi()],
             workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true},
@@ -86,10 +108,53 @@ TestCase {
             windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
         compare(r.groups.length, 2)
         compare(r.groups[0].monitorName, "eDP-1"); verify(r.groups[0].focused)
-        compare(r.groups[0].y, 0); compare(r.groups[1].y, 234)   // eDP header22+row200 → 222, +rowSpacing12
-        compare(r.groups[0].headerH, 22)               // two monitors: header band laid out
-        compare(boxById(r,1).y, 22)
+        compare(r.groups[0].headerH, 22); compare(r.groups[0].inset, 6)
+        // availW 1632 - 2*6 inset = 1620 → cols 5, cw floor((1620-32)/5) = 317, ch round(317/1.6) = 198
+        compare(r.cell.w, 317); compare(r.cell.h, 198)
+        compare(r.groups[0].y, 0); compare(r.groups[0].h, 232)   // 6 + 22 + 198 + 6
+        compare(r.groups[1].y, 244)                              // 232 + rowSpacing 12
+        compare(boxById(r,1).x, 6); compare(boxById(r,1).y, 28)  // inset + header
+        compare(r.groups[0].w, 329)                              // 317 + 2*6
+        // the HDMI group uses its own 16:9 shape: ch round(317/1.778) = 178, group 6+22+178+6
+        compare(boxById(r,6).h, 178); compare(r.groups[1].h, 212)
+        compare(r.canvasSize.w, 329); compare(r.canvasSize.h, 456)   // 244 + 212
         verify(boxById(r,1).y < boxById(r,6).y)
+    }
+    // Group order is fixed by workspace numbers: the group holding the lowest id comes first,
+    // so the picker reads 1..10 top to bottom whichever screen has focus or where the screens
+    // sit physically. The focused group is flagged, not moved.
+    function test_group_order_follows_lowest_workspace_id_not_focus() {
+        var r = Logic.layout({ monitors:[edp(),hdmi()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:false,occupied:true},
+                        {id:6,monitorName:"HDMI-A-1",focused:true,occupied:true}],
+            windows:[], focusedMonitorName:"HDMI-A-1", availW:1632, params:params })
+        compare(r.groups[0].monitorName, "eDP-1"); verify(!r.groups[0].focused)
+        compare(r.groups[1].monitorName, "HDMI-A-1"); verify(r.groups[1].focused)
+        // the external screen owns 1..5 here: it comes first even though it is listed second
+        var r2 = Logic.layout({ monitors:[edp(), hdmi()],
+            workspaces:[{id:6,monitorName:"eDP-1",focused:true,occupied:true},
+                        {id:1,monitorName:"HDMI-A-1",focused:false,occupied:true},
+                        {id:9,monitorName:"HDMI-A-1",focused:false,occupied:false}],
+            windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        compare(r2.groups[0].monitorName, "HDMI-A-1"); compare(r2.groups[1].monitorName, "eDP-1")
+    }
+    // `workspaces` config: integer count, floored, never negative, default 10 on anything odd
+    function test_parse_config_workspaces() {
+        compare(Logic.parseConfig('{"workspaces": 6}').workspaces, 6)
+        compare(Logic.parseConfig('{"workspaces": 0}').workspaces, 0)
+        compare(Logic.parseConfig('{"workspaces": 7.9}').workspaces, 7)
+        compare(Logic.parseConfig('{"workspaces": -3}').workspaces, 0)
+        compare(Logic.parseConfig('{"workspaces": "ten"}').workspaces, 10)
+        compare(Logic.parseConfig('').workspaces, 10)
+        compare(Logic.parseConfig('{"workspaces": 4}').motion, "auto")   // other keys keep defaults
+    }
+    // a single group gets neither the header band nor the inset
+    function test_single_group_has_no_inset() {
+        var r = Logic.layout({ monitors:[edp()],
+            workspaces:[{id:1,monitorName:"eDP-1",focused:true,occupied:true}],
+            windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        compare(r.groups[0].inset, 0); compare(r.groups[0].x, 0); compare(boxById(r,1).x, 0)
+        compare(r.groups[0].w, 320); compare(r.groups[0].h, 200)
     }
     // A monitor without workspaces forms no group, so it must not bring the header band with it.
     function test_header_band_needs_two_monitors_with_workspaces() {
@@ -140,27 +205,23 @@ TestCase {
         verify(t.y + t.h <= b.y + b.h - params.cellInset + lo)
     }
 
-    // Unequal aspect: an ultrawide usable area is wider than the cell's mini-map aspect,
-    // so it is width-limited => letterboxed vertically (offY > inset), horizontally flush.
-    // NOTE: the ultrawide monitor must NOT be the focused monitor here — cw/ch are now
-    // derived from the *focused* monitor's aspect and reused for every box (Task 1), so a
-    // sole+focused ultrawide monitor would size its own box to match its own aspect and the
-    // letterbox axis this test pins would flip. Keeping eDP-1 focused (cell 320x200) and
-    // putting the ultrawide workspace on an unfocused DP-1 reproduces genuine aspect
-    // mismatch between the shared 320x200 cell's mini-map and DP-1's usable rect.
+    // A cell takes its own monitor's aspect, so the only mismatch left between the mini-map
+    // (box minus cellInset) and the usable rect (monitor minus reserved) comes from reserved
+    // space. A 300 px top reservation makes the usable rect 2048x980 (aspect 2.09) inside a
+    // 308x188 mini-map (aspect 1.64): width-limited, letterboxed on height.
     function test_unequal_aspect_letterboxes_on_short_axis() {
-        var uw = { name: "DP-1", x: 2560, y: 0, width: 5120, height: 1440,
-                   scale: 1, reserved: [0, 0, 0, 0], transform: 0 }
+        var mon = edp(); mon.reserved = [0, 300, 0, 0]
         var input = {
-            monitors: [edp(), uw],
-            workspaces: [{ id: 1, monitorName: "DP-1", focused: false, occupied: true }],
+            monitors: [mon],
+            workspaces: [{ id: 1, monitorName: "eDP-1", focused: true, occupied: true }],
             // fullscreen window fills the usable rect exactly, so its tile == the fitted R
-            windows: [{ address: "0xF", cls: "x", ax: 2560, ay: 0, sw: 5120, sh: 1440,
+            windows: [{ address: "0xF", cls: "x", ax: 0, ay: 300, sw: 2048, sh: 980,
                         workspaceId: 1, floating: false, fullscreen: true }],
             focusedMonitorName: "eDP-1", availW: 1632, params: params
         }
         var r = Logic.layout(input)
         var b = boxById(r, 1), t = tilesByAddr(r, "0xF")
+        compare(b.w, 320); compare(b.h, 200)
         // width-limited: fills mini-map width (box.w-2*inset = 308), centered vertically
         // inside mmH (box.h-2*inset = 188)
         fuzzyCompare(t.w, 308, 0.5, "fills mini-map width")

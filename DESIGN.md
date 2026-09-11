@@ -217,6 +217,23 @@ colour at 88 %, accent-filled for the focused workspace), so the 1–0 keys alwa
 anchor. The big low-contrast numeral is kept for empty workspaces only.
 Design: `docs/specs/2026-09-10-ws-badge-design.md`.
 
+## Monitor groups and always-shown workspaces (2026-09-11)
+
+Groups are ordered by the lowest workspace id each monitor holds (so 1..5 above 6..10) instead
+of focused-first; opening the picker from the other screen never swaps them, and focus is shown,
+not sorted. With more
+than one group each group is inset (`groupInset`, 6 px) around its chip band and rows, and
+`Logic.layout` returns the group's full bounds so the view can draw an 8 % accent backdrop behind
+the focused monitor's group. The chip is a Nerd Font glyph — laptop for eDP/LVDS/DSI connectors,
+external screen otherwise — plus the connector name. A single group keeps no band and no inset.
+Each group's cells take the aspect ratio of their own monitor (cell width stays shared), so the
+picture is identical whichever screen has focus and previews no longer letterbox inside a cell
+shaped like the other monitor.
+
+Hyprland only reports workspaces it has created (a `persistent:true` workspace whose monitor is
+unplugged is destroyed once empty), so `Logic.padWorkspaces` fills ids `1..workspaces` (config,
+default 10) as empty wells on the focused monitor, where Hyprland creates them on jump or drop.
+
 ## Theme polish (2026-09-10)
 
 Typography comes from the shell (`Style.font.menuFamily`, `bodySmall`, `caption`) and the card
