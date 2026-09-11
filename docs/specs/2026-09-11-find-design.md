@@ -78,7 +78,9 @@ empty query.
 - **Score** (higher is better) = best of the class score and the title score, where each is the
   sum of per-character bonuses: consecutive with the previous match, at the start of the haystack,
   or at the start of a word (after space, `-`, `_`, `.`, `/`, `:`); minus a small length penalty
-  so a shorter haystack wins a tie. The class score carries a fixed bonus so `slack` ranks the
+  so a shorter haystack wins a tie. The penalty counts at most 80 haystack characters, so a
+  real match always scores above zero and a very long title can never outweigh a word-start
+  bonus. Scores are a ranking key only; the sign carries no meaning beyond that guarantee. The class score carries a fixed bonus so `slack` ranks the
   Slack window above a browser tab titled "Slack alternatives".
 - **Stable**: ties keep layout order, so the ranking does not jitter while typing.
 - Query characters are matched against the haystack lowercased; no diacritic folding (out of
