@@ -56,9 +56,13 @@ Keys, by whether `query` is empty:
 but no match does nothing. Mouse behaviour is unchanged: a tile click focuses that window, a box
 click jumps, a drag moves — all regardless of the query.
 
-Clearing the query (Esc, Ctrl+Backspace, or deleting the last character) returns the box
-selection to where it was before the query started, if that workspace still exists; otherwise to
-the focused workspace, as `rebuild()` already does.
+Clearing the query (Esc, Ctrl+Backspace, or deleting the last character) restores the box
+selection to the workspace selected before the query started (`preQuerySelectedId`). If that
+workspace no longer exists, the selection goes to the **focused** workspace, and to the first box
+if there is none. This is deliberately not `rebuild()`'s rule (nearest surviving position): after
+a search the user has no positional expectation to preserve. Every change of selection made by
+find — typing, cycling, restoring — is followed by `ensureSelectedVisible()`, since assigning
+`selectedIndex` alone does not scroll the Flickable.
 
 ## Matching — `Logic.findMatches(query, windows)`
 
@@ -103,12 +107,21 @@ empty query.
 - `matchIndex: int` — index into `matches`, -1 when none.
 - `preQuerySelectedId: int` — the box selection to restore when the query clears.
 
-`setQuery(q)` recomputes `matches` from `_windowByAddress` (the last `buildInput()` result), clamps
-`matchIndex` (keeps the current address if it is still a match, else 0, else -1), updates the
-tile roles `matched` and `selectedMatch` via `setTileRoles`, and moves `selectedIndex` to the
-selected match's box. `rebuild()` calls the same recompute after `applyTiles`, so windows opening
-or closing while a query is active re-rank; a vanished selected match falls to the next by rank,
-and to the box selection when none remain. Enter dispatches
+Two entry points recompute `matches` from `_windowByAddress` (the last `buildInput()` result), and
+they choose the selection differently:
+
+- **Query edit** (`setQuery(q)`, from typing, Backspace, Ctrl+Backspace): `matchIndex` becomes 0
+  when there is any match, else -1. The best match for the *new* query is always the selection,
+  so a browser that won for `s` cannot stay selected once `slack` ranks Slack first.
+- **Background rebuild** (`rebuild()`, after `applyTiles`, while a query is active): windows opening
+  or closing re-rank the list, but the selected *address* is kept if it still matches. If it is
+  gone, the successor is the old `matchIndex` clamped to the new last index (removing 4 of 6
+  selects the new 4th, removing the last selects the new last, removing the sole match gives -1).
+  With no matches left the box selection stays where the frame already is.
+
+Both then update the tile roles `matched` and `selectedMatch` via `setTileRoles`, move
+`selectedIndex` to the selected match's box, and call `ensureSelectedVisible()`. Cycling
+(arrows/Tab) changes `matchIndex` only and does the same two steps. Enter dispatches
 `hl.dsp.focus({ window = "address:<addr>" })` and `root.close()` — the same two lines the tile
 click uses.
 
@@ -121,7 +134,8 @@ inputs; no key handling, no focus. The key catcher remains the single focus item
   filter.
 - A drag with a query active behaves as today; the drop-target highlight takes precedence over the
   match outline on that one tile while the drag lasts.
-- The selection frame never leaves the current match on a rebuild unless that window is gone.
+- The selection frame never leaves the current match on a rebuild unless that window is gone
+  (successor rule above).
 - Hyprland forwards SUPER chords over the overlay's exclusive focus (verified in v1), so SUPER+P
   still toggles the overlay mid-query.
 
@@ -134,4 +148,11 @@ inputs; no key handling, no focus. The key catcher remains the single focus item
 - **Tier 1, offscreen UI (`tests/ui/`)**: typing through the key catcher sets `matched` /
   `selectedMatch` roles and the bar text; Tab cycles; Esc clears the query and restores the box
   selection; a second Esc closes; a digit jumps with an empty query and appends with a query.
+  Selection rules: a query edit that changes rank 1 moves the selection to the new rank 1 even
+  when the old selection still matches; a rebuild keeps the selected address; removal of the
+  selected match at a middle, last, and sole position picks the clamped successor. Restore:
+  clearing the query after the pre-query workspace vanished selects the focused workspace.
+  Visibility: on an overflowing layout (more rows than the card height), typing a query whose
+  best match sits in the last row scrolls it into view, and so does cycling to it and restoring
+  a pre-query box outside the viewport.
 - **Tier 2**: nothing new.
