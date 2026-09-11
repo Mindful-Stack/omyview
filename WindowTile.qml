@@ -24,6 +24,14 @@ Item {
     property bool fullscreenPending: false   // un-fullscreen dispatched; badge hidden until confirmed
     signal unfullscreenRequested()
 
+    // Find: `matched` and `selectedMatch` mirror the tile-model roles; `dimmed` is "a query is
+    // active and this tile does not match". The outline uses `accent` (Overview's selection
+    // colour), never borderColor, so a drop-target border and a match ring stay distinguishable.
+    property bool matched: false
+    property bool selectedMatch: false
+    property bool dimmed: false
+    property color accent: "#88f"
+
     // Motion vocabulary handed down by Overview: durations (ms) and easings. Tiles never own
     // a duration of their own.
     required property QtObject motion
@@ -94,7 +102,7 @@ Item {
     transformOrigin: Item.Center
     // Hover raises a tile within its own layer only; dragging is the single global exception.
     z: dragging ? 99999 : tileLayer * 10 + (hh.hovered ? 1 : 0)
-    opacity: (dragging ? dragOpacity : 1) * appearOpacity
+    opacity: (dragging ? dragOpacity : (dimmed ? 0.35 : 1)) * appearOpacity
     Behavior on scale { enabled: tile.motion.enabled && !appearAnim.running && !priming
         NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
     Behavior on opacity { enabled: tile.motion.enabled && !appearAnim.running && !priming
@@ -189,6 +197,24 @@ Item {
         y: tile.shownSide === "bottom" ? parent.height / 2 : 0
         width: (tile.shownSide === "left" || tile.shownSide === "right") ? parent.width / 2 : parent.width
         height: (tile.shownSide === "top" || tile.shownSide === "bottom") ? parent.height / 2 : parent.height
+    }
+
+    // find ring: accent outline on a matching tile, heavier on the ranked selection. Hidden
+    // while this tile is the drop target (that border takes precedence). Fades in/out and
+    // thickens on the hover curve (motion.fast); instant with motion off. No mouse handling.
+    Rectangle {
+        objectName: "matchOutline"
+        anchors.fill: parent
+        visible: opacity > 0
+        opacity: (tile.matched && !tile.dropTarget) ? 1 : 0
+        Behavior on opacity { enabled: tile.motion.enabled
+            NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
+        color: "transparent"
+        radius: 5
+        border.width: tile.selectedMatch ? 2 : 1
+        Behavior on border.width { enabled: tile.motion.enabled
+            NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
+        border.color: tile.accent
     }
 
     // fullscreen badge: a drawn four-corner glyph in the top-right corner while the window is

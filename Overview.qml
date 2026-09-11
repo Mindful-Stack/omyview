@@ -747,8 +747,11 @@ Item {
             color: root.background
             opacity: 0        // the entrance brings it in; panel.visible follows this
             readonly property int pad: Math.round(Style.space(12))
-            // Space the key hints take under the grid, zero when they are switched off.
-            readonly property real hintSpace: config.hint ? hint.implicitHeight + 8 : 0
+            // Space under the grid for the key hints or, while a query is active, the find
+            // bar. Zero when hints are off and no query is active; the bar is never suppressed.
+            readonly property bool findActive: root.query.length > 0
+            readonly property real hintSpace:
+                findActive ? findBar.implicitHeight + 8 : (config.hint ? hint.implicitHeight + 8 : 0)
             // Cap the card to the screen so the Flickable viewport can be smaller than the
             // content (`availCanvasW` already keeps canvas width <= this, minus the degenerate
             // narrow-screen case, which is expected to 2-D scroll per the spec).
@@ -945,6 +948,10 @@ Item {
                             fullscreen: model.fullscreen
                             fullscreenPending: model.fsPending
                             title: model.title
+                            matched: model.matched
+                            selectedMatch: model.selectedMatch
+                            dimmed: root.query.length > 0 && !model.matched
+                            accent: root.accent
                             dragging: root.draggingAddress === model.address
                             handle: root.handleByAddress[model.address] || null
                             // Kept loaded while hidden (keepLoaded): captures run only while the
@@ -1139,12 +1146,12 @@ Item {
             // key hints: each binding as a small key cap plus a label; off via config.hint
             Row {
                 id: hint
-                visible: config.hint
+                visible: config.hint && !card.findActive
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 8 }
                 spacing: Math.round(Style.space(12))
                 Repeater {
                     model: [ { k: "1–0", l: "jump" }, { k: "↑ ↓ ← →", l: "move" }, { k: "↵", l: "select" },
-                             { k: "drag", l: "move window" }, { k: "esc", l: "close" } ]
+                             { k: "drag", l: "move window" }, { k: "type", l: "find" }, { k: "esc", l: "close" } ]
                     Row {
                         required property var modelData
                         spacing: 5
@@ -1169,6 +1176,19 @@ Item {
                         }
                     }
                 }
+            }
+
+            FindBar {
+                id: findBar
+                visible: card.findActive
+                // Spans the card interior: the bar's width is the card's, never the query's.
+                anchors { left: parent.left; right: parent.right; bottom: parent.bottom
+                          leftMargin: card.pad; rightMargin: card.pad; bottomMargin: 8 }
+                query: root.query
+                count: root.matches.length
+                index: root.matchIndex
+                fg: root.foreground; accent: root.accent
+                fontFamily: root.fontFamily; fontSize: root.captionSize
             }
         }
     }

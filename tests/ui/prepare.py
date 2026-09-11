@@ -30,6 +30,7 @@ qml = qml.replace('id: root', '''id: root
     property alias testConfig: config
     property alias testEnterAnim: enterAnim
     property alias testKeys: keyCatcher
+    property alias testBar: findBar
     property QtObject compositor: QtObject {
         property var monitors: ({values: []})
         property var workspaces: ({values: []})
@@ -54,6 +55,7 @@ end = tile.index('    // title label', start)
 tile = tile[:start] + '    Rectangle { anchors.fill: parent; color: tile.bg }\n\n' + tile[end:]
 (dest / 'WindowTile.qml').write_text(tile)
 (dest / 'logic.js').write_text((source / 'logic.js').read_text())
+(dest / 'FindBar.qml').write_text((source / 'FindBar.qml').read_text())   # no shell imports: verbatim
 # Shell-only helpers: the config loader needs Quickshell.Io, the shadow a GPU shader.
 # `motionEffective` is writable here so tests can flip the policy without a compositor.
 # `workspaces` defaults to 0 (no padding) so the fixture shows exactly the compositor's

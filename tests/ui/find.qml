@@ -397,4 +397,112 @@ TestCase {
         compare(view.selectedId, 40)
         verify(boxRowVisible(40), "a rebuild that changes the match must scroll to it")
     }
+
+    function tileOf(addr) {
+        var ch = view.testCanvas.children
+        for (var i = 0; i < ch.length; i++) if (ch[i].model && ch[i].model.address === addr) return ch[i]
+        fail("no tile for " + addr)
+    }
+    function childNamed(item, name) {
+        var ch = item.children
+        for (var i = 0; i < ch.length; i++) if (ch[i].objectName === name) return ch[i]
+        return null
+    }
+    // Distinguishes: outline/dim not bound to the roles (a tile could carry matched=true
+    // and draw nothing), and the selected ring not heavier than a plain match.
+    function test_match_outline_and_dim_follow_the_roles() {
+        type("slack")
+        var sel = childNamed(tileOf("0xB"), "matchOutline"), also = childNamed(tileOf("0xA"), "matchOutline")
+        verify(sel !== null && also !== null, "tiles carry a matchOutline item")
+        compare(sel.visible, true); compare(also.visible, true)
+        verify(sel.border.width > also.border.width, "selected ring is heavier")
+        compare(childNamed(tileOf("0xC"), "matchOutline").visible, false)
+        verify(tileOf("0xC").opacity < 0.5, "non-match dims")
+        verify(tileOf("0xB").opacity > 0.9, "match does not dim")
+        keyClick(Qt.Key_Escape)
+        verify(tileOf("0xC").opacity > 0.9, "clearing the query undims")
+        compare(sel.visible, false)
+    }
+    // Distinguishes: a bar that does not show the query, or an "n of m" computed from the
+    // wrong index base (0-based would read "0 of 2").
+    function test_find_bar_shows_query_and_rank() {
+        compare(view.testBar.visible, false)
+        type("slack")
+        compare(view.testBar.visible, true)
+        compare(view.testBar.query, "slack")
+        compare(childNamed(view.testBar, "findCount").text, "1 of 2")
+        keyClick(Qt.Key_Tab)
+        compare(childNamed(view.testBar, "findCount").text, "2 of 2")
+        type("zz")
+        compare(childNamed(view.testBar, "findCount").text, "0 matches")
+        keyClick(Qt.Key_Escape)
+        compare(view.testBar.visible, false)
+    }
+    // Distinguishes: a bar sized from an unconstrained text row (a long query would push the
+    // count outside the card and drift it with the centred row). The count must stay pinned
+    // to the bar's right edge and the query must elide inside the remaining space.
+    //
+    // Deviation from the brief: fuzzyScore()'s subsequence match requires needle.length <=
+    // haystack.length (logic.js:688), and the fixture's shortest matched haystack is "Slack"
+    // (5 chars, both cls and title). A 200-char query therefore cannot match anything under
+    // the existing (pre-Task-6) matching semantics, so the brief's `compare(c.text, "2 of 2")`
+    // is unreachable — a query this long always yields 0 matches. Asserted here instead, since
+    // that is what the production code actually and correctly does; the layout assertions
+    // (the actual point of this test, per its comment) are unaffected by match count.
+    function test_long_query_stays_inside_the_card() {
+        var long = ""; for (var i = 0; i < 40; i++) long += "slack"      // 200 characters
+        type(long)
+        var bar = view.testBar, q = childNamed(bar, "findQuery"), c = childNamed(bar, "findCount")
+        verify(bar.width <= view.testCard.width, "bar never wider than the card")
+        verify(bar.width > 200, "fixture must be wide enough that the count could drift")
+        fuzzyCompare(c.x + c.width, bar.width, 0.5)
+        verify(q.x + q.width <= c.x + 0.5, "query stops before the count")
+        verify(q.truncated, "query is elided, not overflowing")
+        verify(q.contentWidth <= q.width + 0.5)
+        compare(c.text, "0 matches")   // count reads fully, unaffected by the query length
+    }
+    // Distinguishes: a ring toggled through `visible` (opacity would be 1 the instant the
+    // role flips). With motion on, the ring must fade in and out on the motion.fast curve.
+    //
+    // Deviation from the brief: checking immediately after type() sees the Behavior's pre-tick
+    // value (0 real time has elapsed, so opacity is still exactly its start value) — the same
+    // reason drag.qml's fade assertions (e.g. test_drop_wash_fades_in_and_out) wait() a few ms
+    // before reading a mid-flight value. Added wait(40), well under motion.fast's 90 ms.
+    function test_outline_animates_with_motion_on() {
+        view.motion.scale = 1
+        type("slack")
+        var ring = childNamed(tileOf("0xB"), "matchOutline")
+        wait(40)
+        verify(ring.visible)
+        verify(ring.opacity < 1, "ring fades in rather than popping")
+        tryVerify(function () { return ring.opacity === 1 }, 500)
+        keyClick(Qt.Key_Escape)
+        wait(40)
+        verify(ring.opacity > 0, "ring fades out rather than vanishing")
+        tryVerify(function () { return ring.opacity === 0 }, 500)
+        compare(ring.visible, false)
+    }
+    // Distinguishes: the card keeping zero hint space with hints off while a query is
+    // active (the bar would overlap the grid or be clipped).
+    function test_bar_reserves_space_even_with_hints_off() {
+        view.testConfig.hint = false
+        compare(view.testCard.hintSpace, 0)
+        type("s")
+        verify(view.testCard.hintSpace > 0, "the bar needs room while a query is active")
+        keyClick(Qt.Key_Escape)
+        compare(view.testCard.hintSpace, 0)
+    }
+    // Task 4 review carry-forward: applyTiles' update-branch row must never carry
+    // matched/selectedMatch, or every settle tick would `set` them false-then-true again and
+    // restart the fade Behaviors even though nothing about the match changed.
+    function test_settle_tick_does_not_restart_match_animations() {
+        view.motion.scale = 1
+        type("slack")
+        var tile = tileOf("0xB"), ring = childNamed(tile, "matchOutline")
+        tryVerify(function () { return ring.opacity === 1 }, 500)
+        var tileOpacityBefore = tile.opacity
+        view.rebuild()
+        compare(ring.opacity, 1, "an unchanged settle tick must not restart the fade")
+        compare(tile.opacity, tileOpacityBefore, "tile opacity must not be disturbed either")
+    }
 }
