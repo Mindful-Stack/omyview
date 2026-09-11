@@ -29,6 +29,7 @@ qml = qml.replace('id: root', '''id: root
     property alias testScrim: scrimRect
     property alias testConfig: config
     property alias testEnterAnim: enterAnim
+    property alias testKeys: keyCatcher
     property QtObject compositor: QtObject {
         property var monitors: ({values: []})
         property var workspaces: ({values: []})
