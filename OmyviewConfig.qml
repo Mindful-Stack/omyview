@@ -9,6 +9,7 @@ QtObject {
     id: cfg
     property bool scrim: true        // dim the desktop behind the picker
     property bool hint: true         // key hints under the workspace grid
+    property int workspaces: 10      // always show ids 1..N, even ones Hyprland has not created; 0 = off
     property string motion: "auto"   // "auto" follows Hyprland animations:enabled; "full" | "off"
 
     // Hyprland's own animation switch, probed once per open (async, cheap) and cached. A
@@ -25,6 +26,7 @@ QtObject {
         var o = Logic.parseConfig(raw)
         cfg.scrim = o.scrim
         cfg.hint = o.hint
+        cfg.workspaces = o.workspaces
         cfg.motion = o.motion
     }
 

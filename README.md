@@ -19,9 +19,14 @@ removed `walker`.
 - **Fullscreen-aware.** A workspace with a fullscreen window still shows every window in its real
   tiled slot; the fullscreen one carries a small corner badge. Click the badge to un-fullscreen it
   without leaving the overview. Floating windows always show on top of tiled ones.
-- **Per-monitor rows.** Workspaces are grouped into one boxed row per monitor, derived live
-  from Hyprland's workspace→monitor mapping. Docked shows a row per monitor; undocked
-  collapses to one.
+- **Per-monitor groups.** Workspaces are grouped per monitor, derived live from Hyprland's
+  workspace→monitor mapping, and stacked by workspace number (the group holding `1` first,
+  then the one holding `6`, and so on) — the layout never reshuffles depending on which screen
+  you open it from. Each group
+  carries a chip with a laptop or external-screen icon and the connector name; the focused
+  monitor's group sits on a faint accent backdrop. Undocked collapses to a single flush group.
+- **Always 1–0.** Workspaces `1`..`10` are always shown, even ones Hyprland has not created yet,
+  so every number key has a visible target (`workspaces` in the config, `0` to turn it off).
 - **Fast selection.** Number keys jump (`1`–`9`, `0` = 10), arrow keys move the highlight +
   `Enter`, click a window to focus it, middle-click to close it. `Esc` or a click outside closes.
 - **Theme-aware.** Pulls the active Omarchy theme's colors and fonts, so it matches the bar
@@ -137,12 +142,19 @@ Optional user settings live in `~/.config/omarchy/omyview.json` (watched; edits 
 {
   "scrim": true,
   "hint": true,
+  "workspaces": 10,
   "motion": "auto"
 }
 ```
 
 - `scrim` — dim the desktop behind the picker while it is open (default `true`).
 - `hint` — show the key hints under the workspace grid (default `true`).
+- `workspaces` — always show workspaces `1`..`N` (default `10`, matching the 1–0 keys), even
+  ones Hyprland has not created yet, e.g. a `persistent:true` workspace whose monitor is
+  unplugged. A missing workspace is drawn as an empty well next to its numeric neighbours (on the
+  monitor of the nearest lower existing workspace), so the layout never depends on which screen
+  has focus; Hyprland decides the real monitor when you jump or drop there, and the picker then
+  follows. `0` shows only what Hyprland reports.
 - `motion` — `"auto"` (default) animates only when Hyprland's `animations:enabled` is on;
   `"full"` always animates; `"off"` never does (every duration is 0).
 

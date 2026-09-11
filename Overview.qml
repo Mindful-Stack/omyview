@@ -65,6 +65,13 @@ Item {
         readonly property int hover: Easing.OutQuad       // hover, lift, release
         readonly property int entrance: Easing.OutBack    // overshoot is deliberately small; raise towards Qt's 1.70158 default if the entrance feels flat
         readonly property real overshoot: 1.2             // Qt default is 1.70158; "small"
+        // Motion switched off while an open/close animation is in flight (a late probe result,
+        // or a config edit): stop it and land on the final values at once. Layout Behaviors and
+        // tile appear animations already in flight finish at their correct targets on their own
+        // (≤ 160 ms) — only the enter/exit fade needs this nudge. Handled here rather than in a
+        // Connections element: Connections has its own `enabled` property, so an
+        // `onEnabledChanged` handler inside one is rejected by Qt 6.4 as a duplicate method.
+        onEnabledChanged: if (!enabled) root._showVisuals(root.opened)
     }
     // Layout Behaviors (frame, tiles, boxes, card size) run only when motion is on and the
     // entrance is not playing: delegates are created at their final geometry, and the settle
@@ -78,8 +85,14 @@ Item {
     // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.
     readonly property var params: ({
         maxCols: 5, minCellW: 140, maxCellW: 380, cellInset: 3, cellSpacing: 4,
-        rowSpacing: 8, headerH: 22, minTileW: 8, minTileH: 6, slotGapTolerance: 24
+        rowSpacing: 8, headerH: 22, groupInset: 6, minTileW: 8, minTileH: 6, slotGapTolerance: 24
     })
+    // Backdrop behind the focused monitor's group: a whisper of accent, so which screen is
+    // live reads peripherally without touching the three well shades.
+    readonly property color groupBackdropColor: Qt.rgba(accent.r, accent.g, accent.b, 0.08)
+    // Nerd Font glyphs (nf-md-laptop / nf-md-monitor); Omarchy's menu font carries them.
+    // Internal panels are eDP/LVDS/DSI connectors, everything else is an external screen.
+    function monitorIcon(name) { return /^(eDP|LVDS|DSI)/i.test(name) ? "\u{F0322}" : "\u{F0379}" }
 
     property var groups: []
     // Card interior logical width available to the canvas: panel.width (logical, not
@@ -132,8 +145,10 @@ Item {
                             grouped: !!(o.grouped && o.grouped.length) })
             }
         }
-        return { monitors: mons, workspaces: wss, windows: wins,
-                 focusedMonitorName: Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : "",
+        var focusedMonitorName = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
+        return { monitors: mons,
+                 workspaces: Logic.padWorkspaces(wss, config.workspaces, focusedMonitorName),
+                 windows: wins, focusedMonitorName: focusedMonitorName,
                  availW: root.availCanvasW, params: root.params }
     }
 
@@ -548,15 +563,6 @@ Item {
         NumberAnimation { target: card; property: "scale"; to: 0.98
                           duration: root.motion.exit; easing.type: root.motion.move }
     }
-    // Motion switched off while an open/close animation is in flight (a late probe result,
-    // or a config edit): stop it and land on the final values at once. Layout Behaviors and
-    // tile appear animations already in flight finish at their correct targets on their own
-    // (≤ 160 ms) — only the enter/exit fade needs this nudge.
-    Connections {
-        target: root.motion
-        function onEnabledChanged() { if (!root.motion.enabled) root._showVisuals(root.opened) }
-    }
-
     // Ask Hyprland for fresh client data, then rebuild every 60ms until five quiet ticks have
     // passed, so a window opened while the overview is visible appears once its async geometry
     // arrives — a single immediate rebuild would read stale/empty `lastIpcObject` geometry.
@@ -599,6 +605,12 @@ Item {
     Connections {
         target: Hyprland
         function onRawEvent() { if (root.opened) root.scheduleRebuild() }
+    }
+    // The watched config file changing the padded workspace count while open: the compositor
+    // data is not stale, so a plain rebuild re-lays the wells at once.
+    Connections {
+        target: config
+        function onWorkspacesChanged() { if (root.opened) root.rebuild() }
     }
 
     PanelWindow {
@@ -703,6 +715,21 @@ Item {
                     width: implicitWidth; height: implicitHeight
                     implicitWidth: 100; implicitHeight: 100
 
+                    // group backdrop layer (lowest): only the focused monitor's group gets one.
+                    // Keyed on panel.visible like the chips, so it fades out with the card
+                    // instead of popping out the moment close() drops `opened`.
+                    Repeater {
+                        model: panel.visible && root.groups.length > 1 ? root.groups : []
+                        Rectangle {
+                            objectName: "groupBackdrop"
+                            required property var modelData
+                            visible: modelData.focused
+                            x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h
+                            radius: root.boxRadius + modelData.inset
+                            color: root.groupBackdropColor
+                        }
+                    }
+
                     // boxes layer
                     Repeater {
                         model: boxesModel
@@ -746,17 +773,19 @@ Item {
                         }
                     }
 
-                    // monitor chips layer (siblings, above boxes) — plain labels, one per group;
-                    // the focused monitor's label is accented. Shown only when the layout has
-                    // more than one group (then each group carries a non-zero header band).
+                    // monitor chips layer (siblings, above boxes) — an icon (laptop or external
+                    // screen) plus the connector name, one per group; the focused monitor's
+                    // chip is accented and sits on the group backdrop. Shown only when the
+                    // layout has more than one group (then each group carries a header band).
                     Repeater {
                         model: panel.visible && root.groups.length > 1 ? root.groups : []
                         Text {
+                            objectName: "monitorChip"
                             required property var modelData
-                            x: modelData.x + 4; y: modelData.y
+                            x: modelData.x + modelData.inset + 4; y: modelData.y + modelData.inset
                             height: modelData.headerH
                             verticalAlignment: Text.AlignVCenter
-                            text: modelData.monitorName
+                            text: root.monitorIcon(modelData.monitorName) + "  " + modelData.monitorName
                             color: modelData.focused ? root.accent : root.foreground
                             opacity: modelData.focused ? 1.0 : 0.55
                             font.family: root.fontFamily

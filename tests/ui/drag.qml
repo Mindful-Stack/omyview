@@ -709,6 +709,34 @@ TestCase {
     }
     // Selection is a workspace, not a position: when a preceding workspace disappears the
     // selected id must survive the rebuild.
+    // A config edit while the picker is open must re-lay the wells at once, with no
+    // compositor event and after the settle ticks are long gone.
+    function test_workspaces_config_change_rebuilds_while_open() {
+        compare(view.boxes.length, 2)
+        view.testConfig.workspaces = 10
+        compare(view.boxes.length, 10, "padded wells appear on the config change itself")
+        compare(canvasItems("wsBox").length, 10)
+        view.testConfig.workspaces = 0
+        compare(view.boxes.length, 2, "and disappear again when padding is turned off")
+    }
+    // The focused group's backdrop belongs to the card: it must stay through the exit fade
+    // (panel still visible) instead of vanishing the moment close() drops `opened`.
+    function test_group_backdrop_survives_exit_fade() {
+        var a = view.compositor.monitors.values[0]
+        var b = {name:"EXT", x:0, y:0, width:1920, height:1080, scale:1,
+                 lastIpcObject:{reserved:[0,0,0,0],transform:0}}
+        view.compositor.monitors = {values:[a, b]}
+        view.compositor.workspaces.values.push({id:6, monitor:b, toplevels:{values:[]}})
+        view.rebuild()
+        compare(view.groups.length, 2)
+        compare(canvasItems("groupBackdrop").length, 2, "one backdrop item per group")
+        view.motion.scale = 1                  // a real fade, so the panel outlives `opened`
+        view.close()
+        verify(view.testPanel.visible, "panel still up for the exit fade")
+        compare(canvasItems("groupBackdrop").length, 2, "backdrops still present during the fade")
+        tryVerify(function () { return !view.testPanel.visible }, 2000)
+        compare(canvasItems("groupBackdrop").length, 0, "gone once the panel unmaps")
+    }
     function test_selection_keeps_workspace_when_earlier_one_vanishes() {
         threeWorkspaces()
         view.selectByNav("right")

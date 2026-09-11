@@ -6,18 +6,26 @@ function _index(arr, key) {
     return m
 }
 
-function _orderedMonitorNames(monitors, workspaces, focusedName) {
-    var present = {}
-    for (var i = 0; i < workspaces.length; i++)
-        if (workspaces[i].id >= 0) present[workspaces[i].monitorName] = true
-    var byName = _index(monitors, "name")
+// Monitors that have workspaces, ordered by the lowest REAL workspace id each one holds, so
+// the groups read 1..10 top to bottom. Synthetic wells (padWorkspaces) never take part in the
+// key — they are the one thing that may differ between two focus states — and a group with
+// only synthetic wells falls back to its lowest synthetic id. Fixed regardless of focus and
+// screen position: the focused group is marked, not moved.
+function _orderedMonitorNames(monitors, workspaces) {
+    var real = {}, any = {}
+    for (var i = 0; i < workspaces.length; i++) {
+        var ws = workspaces[i]; if (ws.id < 0) continue
+        var m = ws.monitorName
+        if (!(m in any) || ws.id < any[m]) any[m] = ws.id
+        if (!ws.synthetic && (!(m in real) || ws.id < real[m])) real[m] = ws.id
+    }
     var names = []
     for (var j = 0; j < monitors.length; j++)
-        if (present[monitors[j].name]) names.push(monitors[j].name)
+        if (monitors[j].name in any) names.push(monitors[j].name)
+    function key(n) { return n in real ? real[n] : any[n] }
     names.sort(function (a, b) {
-        if (a === focusedName && b !== focusedName) return -1
-        if (b === focusedName && a !== focusedName) return 1
-        return byName[a].x - byName[b].x
+        var ka = key(a), kb = key(b)
+        return ka !== kb ? ka - kb : (a < b ? -1 : a > b ? 1 : 0)
     })
     return names
 }
@@ -137,10 +145,55 @@ function recoverSlot(R, others, P) {
     return Math.min(slot.w, slot.h) <= tol ? null : slot
 }
 
+// Pad `workspaces` so ids 1..count all appear, so the 1–0 keys always have a target even when
+// Hyprland has not created a workspace (a persistent rule whose monitor is absent, or no rule
+// at all). A synthesized well is placed next to its numeric neighbours — on the monitor of the
+// nearest lower real workspace, else the nearest higher one — so where it is drawn depends
+// only on the real workspace→monitor mapping, never on focus (the layout must not move when
+// the overview opens from the other screen). Only when no real workspace exists at all does it
+// fall back to the focused monitor. Hyprland decides the actual monitor when the workspace is
+// created on jump or drop; the next rebuild then shows the truth. Synthesized entries carry
+// `synthetic: true` so ordering can ignore them. `count` <= 0 disables padding. Returns a new
+// array; input untouched.
+function padWorkspaces(workspaces, count, focusedMonitorName) {
+    var out = workspaces.slice()
+    if (!(count > 0)) return out
+    var realIds = []
+    var monById = {}
+    for (var i = 0; i < workspaces.length; i++) {
+        var ws = workspaces[i]; if (ws.id < 0) continue
+        monById[ws.id] = ws.monitorName; realIds.push(ws.id)
+    }
+    realIds.sort(function (a, b) { return a - b })
+    function hostFor(id) {
+        var lower = -1, higher = -1
+        for (var k = 0; k < realIds.length; k++) {
+            if (realIds[k] < id) lower = realIds[k]
+            else if (higher < 0) { higher = realIds[k]; break }
+        }
+        if (lower >= 0) return monById[lower]
+        if (higher >= 0) return monById[higher]
+        return focusedMonitorName
+    }
+    for (var id = 1; id <= count; id++) {
+        if (id in monById) continue
+        var host = hostFor(id); if (!host) continue
+        out.push({ id: id, monitorName: host, focused: false, occupied: false, synthetic: true })
+    }
+    return out
+}
+
 function layout(input) {
     var P = input.params
     var monByName = _index(input.monitors, "name")
-    var order = _orderedMonitorNames(input.monitors, input.workspaces, input.focusedMonitorName)
+    var order = _orderedMonitorNames(input.monitors, input.workspaces)
+
+    // With more than one monitor group each group gets a chip band (headerH) and an inset
+    // (groupInset) so a backdrop can be drawn around it inside the canvas; a single group
+    // gets neither, keeping the one-monitor picture flush.
+    var multi = order.length > 1
+    var headerH = multi ? P.headerH : 0
+    var inset = multi ? (P.groupInset || 0) : 0
 
     // adaptive cell size — maxCols is a CAP, not a floor
     var gap = P.cellSpacing
@@ -148,14 +201,18 @@ function layout(input) {
     // (maxCols-1) gaps between them included, so cols resolves to maxCols and cw clamps
     // to exactly minCellW — finite, valid geometry instead of NaN.
     var availW = (typeof input.availW === "number" && input.availW > 0)
-        ? input.availW : (P.maxCols * P.minCellW + (P.maxCols - 1) * gap)
+        ? input.availW - 2 * inset : (P.maxCols * P.minCellW + (P.maxCols - 1) * gap)
     var cols = Math.max(1, Math.min(P.maxCols,
         Math.floor((availW + gap) / (P.minCellW + gap))))
     var cw = Math.max(P.minCellW, Math.min(P.maxCellW,
         Math.floor((availW - (cols - 1) * gap) / cols)))
-    var fmon = monByName[input.focusedMonitorName]
-    var aspect = fmon ? _monLogical(fmon).w / _monLogical(fmon).h : (16 / 10)
-    var ch = Math.round(cw / aspect)
+    // Cell height follows each group's own monitor (see the group loop), so the picture is
+    // identical whichever screen has focus; `cell.h` reports the focused monitor's for reference.
+    function cellHeightFor(mon) {
+        var aspect = mon ? _monLogical(mon).w / _monLogical(mon).h : (16 / 10)
+        return Math.round(cw / aspect)
+    }
+    var ch = cellHeightFor(monByName[input.focusedMonitorName])
 
     var wsByMon = {}
     for (var i = 0; i < input.workspaces.length; i++) {
@@ -164,28 +221,35 @@ function layout(input) {
     }
     for (var mn in wsByMon) wsByMon[mn].sort(function (a, b) { return a.id - b.id })
 
-    // The monitor-chip band only earns its height when more than one monitor has workspaces.
-    var headerH = order.length > 1 ? P.headerH : 0
+    // Groups carry their full bounds (x, y, w, h) — the inset, chip band and rows — so the
+    // view can draw a backdrop behind the focused monitor's group.
     var boxes = [], boxByWs = {}, groups = [], y = 0, canvasW = 0
     for (var r = 0; r < order.length; r++) {
         var name = order[r], wss = wsByMon[name] || []
         if (!wss.length) continue
         var focusedGroup = name === input.focusedMonitorName
-        groups.push({ monitorName: name, x: 0, y: y, headerH: headerH, focused: focusedGroup })
-        y += headerH
+        var gch = cellHeightFor(monByName[name])
+        var group = { monitorName: name, x: 0, y: y, w: 0, h: 0, inset: inset, headerH: headerH,
+                      focused: focusedGroup }
+        groups.push(group)
+        y += inset + headerH
+        var groupW = 0
         for (var s = 0; s < wss.length; s += cols) {
             var chunk = wss.slice(s, s + cols)
             for (var c = 0; c < chunk.length; c++) {
                 var box = { workspaceId: chunk[c].id, monitorName: name, monFocused: focusedGroup,
-                            x: c * (cw + gap), y: y, w: cw, h: ch,
+                            x: inset + c * (cw + gap), y: y, w: cw, h: gch,
                             focused: !!chunk[c].focused, occupied: !!chunk[c].occupied }
                 boxes.push(box); boxByWs[box.workspaceId] = box
             }
             var rowW = chunk.length * cw + (chunk.length - 1) * gap
-            if (rowW > canvasW) canvasW = rowW
-            y += ch
+            if (rowW > groupW) groupW = rowW
+            y += gch
             if (s + cols < wss.length) y += P.rowSpacing        // between sub-rows of one group
         }
+        y += inset
+        group.w = groupW + 2 * inset; group.h = y - group.y
+        if (group.w > canvasW) canvasW = group.w
         if (r < order.length - 1) y += P.rowSpacing             // between monitor groups
     }
 
@@ -593,6 +657,8 @@ function parseConfig(raw) {
     return {
         scrim: (typeof o.scrim === "boolean") ? o.scrim : true,
         hint: (typeof o.hint === "boolean") ? o.hint : true,
+        workspaces: (typeof o.workspaces === "number" && isFinite(o.workspaces))
+            ? Math.max(0, Math.floor(o.workspaces)) : 10,
         motion: (o.motion === "full" || o.motion === "off") ? o.motion : "auto"
     }
 }
