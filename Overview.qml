@@ -18,6 +18,17 @@ Item {
     readonly property int selectedId:
         (selectedIndex >= 0 && selectedIndex < boxes.length) ? boxes[selectedIndex].workspaceId : -1
 
+    // Find (docs/specs/2026-09-11-find-design.md). There is no mode: a non-empty query is
+    // what changes the keys. `matches` is the ranked result of Logic.findMatches over the last
+    // buildInput() window list; `matchIndex` is the ranked selection.
+    property string query: ""
+    property var matches: []
+    property int matchIndex: -1
+    property int preQuerySelectedId: -1     // box selection to restore when the query clears
+    readonly property string selectedMatchAddress:
+        (matchIndex >= 0 && matchIndex < matches.length) ? matches[matchIndex].address : ""
+    property var _windows: []               // buildInput().windows, layout order, for re-ranking
+
     // theme — tone steps, not lines (see docs/specs/2026-09-10-restyle-design.md)
     property color background: Color.menu.background
     property color foreground: Color.menu.text
@@ -172,6 +183,83 @@ Item {
     function setTileRoles(addr, roles) {
         for (var i = 0; i < tilesModel.count; i++)
             if (tilesModel.get(i).address === addr) { tilesModel.set(i, roles); return }
+    }
+    // ---- Find -------------------------------------------------------------------------
+    // Query edit: the best match for the *new* query is always the selection (a window that
+    // won for "s" must not stay selected once "slack" ranks another first).
+    function setQuery(q) {
+        if (!query.length && q.length) preQuerySelectedId = selectedId
+        query = q
+        if (!q.length) {
+            matches = []; matchIndex = -1
+            applyMatchRoles()
+            restorePreQuerySelection()
+            return
+        }
+        matches = Logic.findMatches(q, _windows)
+        matchIndex = matches.length ? 0 : -1
+        applyMatchRoles()
+        followMatch()
+    }
+    // Background rebuild while a query is active: keep the selected address if it still
+    // matches; otherwise the old index clamped to the new last index (the successor rule).
+    function rematchAfterRebuild() {
+        if (!query.length) return
+        var keep = selectedMatchAddress, oldIndex = matchIndex
+        matches = Logic.findMatches(query, _windows)
+        var idx = -1
+        for (var i = 0; i < matches.length; i++) if (matches[i].address === keep) { idx = i; break }
+        if (idx < 0 && matches.length) idx = Math.min(Math.max(oldIndex, 0), matches.length - 1)
+        matchIndex = idx
+        applyMatchRoles()
+        followMatch()
+    }
+    function cycleMatch(step) {
+        if (!matches.length) return
+        var i = matchIndex < 0 ? 0 : matchIndex
+        matchIndex = (i + step + matches.length) % matches.length
+        applyMatchRoles()
+        followMatch()
+    }
+    function applyMatchRoles() {
+        var isMatch = {}
+        for (var i = 0; i < matches.length; i++) isMatch[matches[i].address] = true
+        var sel = selectedMatchAddress
+        for (var t = 0; t < tilesModel.count; t++) {
+            var cur = tilesModel.get(t)
+            var next = { matched: !!isMatch[cur.address], selectedMatch: cur.address === sel }
+            if (rowDiffers(cur, next)) tilesModel.set(t, next)
+        }
+    }
+    // Move the box selection to the selected match's workspace and scroll it into view.
+    function followMatch() {
+        var addr = selectedMatchAddress; if (!addr) return
+        var win = _windowByAddress[addr]; if (!win) return
+        var idx = Logic.indexOfWorkspace(boxes, win.workspaceId)
+        if (idx < 0) return
+        selectedIndex = idx
+        ensureSelectedVisible()
+    }
+    // Query cleared: back to the pre-query workspace; if it is gone, the focused workspace,
+    // then the first box. Deliberately not rebuild()'s nearest-position rule — after a search
+    // there is no positional expectation to preserve.
+    function restorePreQuerySelection() {
+        var idx = preQuerySelectedId >= 0 ? Logic.indexOfWorkspace(boxes, preQuerySelectedId) : -1
+        if (idx < 0) for (var b = 0; b < boxes.length; b++) if (boxes[b].focused) { idx = b; break }
+        if (idx < 0 && boxes.length) idx = 0
+        preQuerySelectedId = -1
+        selectedIndex = idx
+        ensureSelectedVisible()
+    }
+    function acceptMatch() {
+        var addr = selectedMatchAddress; if (!addr) return
+        Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })'); root.close()
+    }
+    // open(): forget any query from the previous summon, without touching the selection
+    // (open() resets that itself).
+    function resetFind() {
+        query = ""; matches = []; matchIndex = -1; preQuerySelectedId = -1
+        applyMatchRoles()
     }
     // Badge click: turn fullscreen off for `addr` silently (no focus, no workspace switch, the
     // overview stays open). Optimistic: the badge hides now and the tile keeps its recovered
@@ -383,7 +471,8 @@ Item {
             tilesModel.append({ address: t.address, wx: t.x, wy: t.y, ww: t.w, wh: t.h,
                                 cls: clsFor(t.address), title: titleFor(t.address),
                                 wsid: t.workspaceId, floating: floatingFor(t.address),
-                                layer: t.layer, fullscreen: t.fullscreen, fsPending: false })
+                                layer: t.layer, fullscreen: t.fullscreen, fsPending: false,
+                                matched: false, selectedMatch: false })
         }
         for (var u = 0; u < d.updates.length; u++) {
             var tu = d.updates[u]
@@ -448,6 +537,7 @@ Item {
         var keepId = root.selectedId   // the workspace the user has selected, before layout
         buildHandles()
         var input = buildInput()
+        root._windows = input.windows
         var cmap = {}, tmap = {}, fmap = {}, wmap = {}
         for (var i = 0; i < input.windows.length; i++) {
             wmap[input.windows[i].address] = input.windows[i]
@@ -483,6 +573,7 @@ Item {
             if (idx < 0) idx = 0
         }
         root.selectedIndex = idx
+        rematchAfterRebuild()   // a query survives rebuilds; windows may have come or gone
     }
 
     function selectByNav(dir) {
@@ -511,6 +602,7 @@ Item {
         if (typeof Hyprland.refreshMonitors === "function") Hyprland.refreshMonitors()
         config.probeMotion()                       // async; result lands for this or the next open
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
+        resetFind()
         _showVisuals(true)                         // before the first rebuild: layout motion is gated on it
         rebuild()          // instant paint from current data
         flick.contentX = 0; flick.contentY = 0   // fresh scroll every open (kept-loaded state would otherwise leak the last offset)
@@ -667,16 +759,40 @@ Item {
                 focus: true
                 Keys.priority: Keys.BeforeItem
                 Keys.onPressed: function (e) {
-                    if (e.key === Qt.Key_Escape) { root.close(); e.accepted = true }
-                    else if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) { root.jump(e.key - Qt.Key_0); e.accepted = true }
-                    else if (e.key === Qt.Key_0) { root.jump(10); e.accepted = true }
-                    else if (e.key === Qt.Key_Left) { root.selectByNav("left"); e.accepted = true }
-                    else if (e.key === Qt.Key_Right) { root.selectByNav("right"); e.accepted = true }
-                    else if (e.key === Qt.Key_Up) { root.selectByNav("up"); e.accepted = true }
-                    else if (e.key === Qt.Key_Down) { root.selectByNav("down"); e.accepted = true }
-                    else if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {
-                        if (root.selectedId >= 0) root.jump(root.selectedId); e.accepted = true
+                    var finding = root.query.length > 0
+                    var chord = e.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)
+                    e.accepted = true
+                    // Chords first: the only one with a meaning is Ctrl+Backspace (clear the
+                    // query). Every other Ctrl/Alt/Meta combination is reserved for future
+                    // actions and must reach no action below — a modified digit, Enter, Tab or
+                    // arrow does nothing.
+                    if (chord) {
+                        if (chord === Qt.ControlModifier && e.key === Qt.Key_Backspace && finding) root.setQuery("")
+                        return
                     }
+                    if (e.key === Qt.Key_Escape) { if (finding) root.setQuery(""); else root.close(); return }
+                    if (e.key === Qt.Key_Backspace) {
+                        if (finding) root.setQuery(root.query.slice(0, -1))
+                        return
+                    }
+                    if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {
+                        if (finding) root.acceptMatch()
+                        else if (root.selectedId >= 0) root.jump(root.selectedId)
+                        return
+                    }
+                    if (finding) {
+                        if (e.key === Qt.Key_Down || e.key === Qt.Key_Right || e.key === Qt.Key_Tab) { root.cycleMatch(1); return }
+                        if (e.key === Qt.Key_Up || e.key === Qt.Key_Left || e.key === Qt.Key_Backtab) { root.cycleMatch(-1); return }
+                    } else {
+                        if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) { root.jump(e.key - Qt.Key_0); return }
+                        if (e.key === Qt.Key_0) { root.jump(10); return }
+                        if (e.key === Qt.Key_Left) { root.selectByNav("left"); return }
+                        if (e.key === Qt.Key_Right) { root.selectByNav("right"); return }
+                        if (e.key === Qt.Key_Up) { root.selectByNav("up"); return }
+                        if (e.key === Qt.Key_Down) { root.selectByNav("down"); return }
+                    }
+                    var next = Logic.appendQueryText(root.query, e.text)
+                    if (next !== root.query) root.setQuery(next)
                 }
             }
 

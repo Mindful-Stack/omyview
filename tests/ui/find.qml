@@ -69,4 +69,119 @@ TestCase {
         compare(view.compositor.commands.length, 1)
         verify(view.compositor.commands[0].indexOf('workspace = "3"') >= 0)
     }
+
+    // Distinguishes: a handler that leaves letters unhandled, or one that appends control
+    // text (Backspace would then grow the query instead of shrinking it).
+    function test_typing_builds_and_backspace_edits_the_query() {
+        type("sla")
+        compare(view.query, "sla")
+        keyClick(Qt.Key_Backspace)
+        compare(view.query, "sl")
+        keyClick(Qt.Key_Backspace, Qt.ControlModifier)
+        compare(view.query, "", "Ctrl+Backspace clears")
+        compare(view.opened, true, "editing never closes")
+    }
+    // Distinguishes: roles computed from something other than findMatches (all true / all
+    // false), and a selectedMatch that is not rank 1. For "slack": class Slack (0xB) beats the
+    // title-only chromium tab (0xA); foot (0xC) does not match.
+    function test_query_sets_tile_roles() {
+        type("slack")
+        compare(row("0xB").matched, true);  compare(row("0xB").selectedMatch, true)
+        compare(row("0xA").matched, true);  compare(row("0xA").selectedMatch, false)
+        compare(row("0xC").matched, false); compare(row("0xC").selectedMatch, false)
+        compare(view.matches.length, 2)
+    }
+    // Distinguishes: Escape closing while a query is active (no "unwind"), and roles left
+    // stale after the query clears.
+    function test_escape_unwinds_then_closes() {
+        type("foot")
+        compare(row("0xC").matched, true)
+        keyClick(Qt.Key_Escape)
+        compare(view.query, "")
+        compare(view.opened, true, "first Escape only clears the query")
+        compare(row("0xC").matched, false)
+        compare(row("0xC").selectedMatch, false)
+        keyClick(Qt.Key_Escape)
+        compare(view.opened, false, "second Escape closes")
+    }
+    // Distinguishes: digits always jumping (query would stay "s") or never jumping.
+    function test_digit_jumps_only_while_query_is_empty() {
+        type("s")
+        keyClick("2")
+        compare(view.query, "s2")
+        compare(view.compositor.commands.length, 0, "a digit inside a query must not dispatch")
+        keyClick(Qt.Key_Backspace); keyClick(Qt.Key_Backspace)
+        compare(view.query, "")
+        keyClick("2")
+        verify(view.compositor.commands.some(function (c) { return c.indexOf('workspace = "2"') >= 0 }),
+               "a digit with an empty query jumps")
+        compare(view.opened, false)
+    }
+    // Distinguishes: Enter jumping to the workspace (spec: it must focus the *window*), and
+    // Enter with a query but no match doing something.
+    function test_enter_focuses_the_selected_window() {
+        type("foot")
+        keyClick(Qt.Key_Return)
+        compare(view.compositor.commands.length, 1)
+        verify(view.compositor.commands[0].indexOf('window = "address:0xC"') >= 0,
+               "Enter must dispatch a window focus, got: " + view.compositor.commands[0])
+        compare(view.opened, false)
+    }
+    function test_enter_with_no_match_does_nothing() {
+        type("zzz")
+        compare(view.matches.length, 0)
+        keyClick(Qt.Key_Return)
+        compare(view.compositor.commands.length, 0)
+        compare(view.opened, true)
+    }
+    // Distinguishes: a space starting a query (would set query " " and dim everything).
+    function test_space_does_not_start_a_query() {
+        keyClick(Qt.Key_Space)
+        compare(view.query, "")
+        type("sl"); keyClick(Qt.Key_Space)
+        compare(view.query, "sl ")
+    }
+    // Distinguishes: bare-letter handling swallowing chords. Ctrl+S is reserved: it must
+    // neither type nor act.
+    function test_ctrl_chords_are_ignored() {
+        keyClick("s", Qt.ControlModifier)
+        compare(view.query, "")
+        compare(view.compositor.commands.length, 0)
+        compare(view.opened, true)
+    }
+    // Distinguishes: a chord guard placed after the action branches (Ctrl+2 would jump and
+    // close, Alt+Enter would accept, Ctrl+Tab would cycle). Only Ctrl+Backspace is a chord
+    // with a meaning.
+    function test_modified_action_keys_are_ignored() {
+        keyClick("2", Qt.ControlModifier)
+        compare(view.compositor.commands.length, 0, "Ctrl+2 must not jump")
+        compare(view.opened, true)
+        type("slack")                                   // ranked: 0xB, 0xA
+        keyClick(Qt.Key_Tab, Qt.ControlModifier)
+        compare(view.selectedMatchAddress, "0xB", "Ctrl+Tab must not cycle")
+        keyClick(Qt.Key_Return, Qt.AltModifier)
+        compare(view.compositor.commands.length, 0, "Alt+Enter must not accept")
+        compare(view.opened, true)
+        keyClick(Qt.Key_Escape, Qt.MetaModifier)
+        compare(view.query, "slack", "Meta+Esc must not clear")
+        keyClick(Qt.Key_Backspace, Qt.ControlModifier)
+        compare(view.query, "", "Ctrl+Backspace is the one chord that acts")
+    }
+    // Distinguishes: a kept-loaded overlay reopening with the previous query.
+    function test_reopen_starts_with_an_empty_query() {
+        type("foot")
+        view.close(); wait(50)
+        view.open(); wait(400)
+        compare(view.query, "")
+        compare(view.matches.length, 0)
+        compare(row("0xC").matched, false)
+    }
+    // Distinguishes: a window on a special workspace leaking into the match list (the spec
+    // excludes the scratchpad by excluding special workspaces from the input).
+    function test_special_workspace_windows_never_match() {
+        view.compositor.workspaces.values.push(wsRow(-99, [client("0xS", "Bitwarden", "secretpad", 100)]))
+        view.rebuild()
+        type("secretpad")
+        compare(view.matches.length, 0)
+    }
 }
