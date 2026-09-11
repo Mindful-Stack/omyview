@@ -9,7 +9,8 @@ Maintained as a standalone public repo (`Mindful-Stack/omyview`). See `DESIGN.md
 states (2026-09-10): fullscreen windows drawn in their recovered slot with an un-fullscreen
 badge; floating tiles stack above tiled. Hardening (2026-09-10, review follow-up): atomic
 floating move, guarded chunk cleanup + error reporting, dwindle guard, event-flood-safe
-refresh, selection by workspace id, Lua behaviour suite in CI.
+refresh, selection by workspace id, Lua behaviour suite in CI. Find (2026-09-11): type-ahead
+fuzzy window search, see docs/specs/2026-09-11-find-design.md.
 
 ## Next steps
 
@@ -50,6 +51,10 @@ Extracted from the author's dotfiles into `Mindful-Stack/omyview` (2026-09-07). 
 per-machine with `omarchy plugin add https://github.com/Mindful-Stack/omyview.git --enable`
 and updated with `omarchy plugin update se.mindfulstack.omyview`. See `README.md` for the
 consumer-side install + SUPER+P bind.
+
+### 7. ~~Find — type-ahead window search~~ ✅ done (2026-09-11)
+Type any letter to fuzzy-filter windows by class and title; see
+`docs/specs/2026-09-11-find-design.md`.
 
 ## Maintenance gotchas (verified in-session)
 - **Editing `Overview.qml` requires `omarchy restart shell`** — `omarchy-shell shell
