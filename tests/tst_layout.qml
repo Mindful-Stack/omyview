@@ -54,25 +54,61 @@ TestCase {
         compare(r.canvasSize.w, 600)                    // full row: 4*144 + 3*8 = 600 = availW
     }
     // Hyprland only reports workspaces it has created; padding fills in the 1–0 keys' targets
-    // as empty wells on the focused monitor, keeps real ones verbatim, and sorts into place.
-    function test_pad_workspaces_fills_missing_ids_on_focused_monitor() {
+    // as empty wells next to their numeric neighbours (nearest lower real id's monitor), keeps
+    // real ones verbatim, and flags the synthetic ones.
+    function test_pad_workspaces_fills_missing_ids_next_to_neighbours() {
         var real = [{id:1,monitorName:"eDP-1",focused:true,occupied:true},
                     {id:6,monitorName:"HDMI-A-1",focused:false,occupied:true}]
         var padded = Logic.padWorkspaces(real, 10, "eDP-1")
         compare(padded.length, 10); compare(real.length, 2)          // input untouched
-        var ten = null; for (var i = 0; i < padded.length; i++) if (padded[i].id === 10) ten = padded[i]
-        compare(ten.monitorName, "eDP-1"); compare(ten.occupied, false); compare(ten.focused, false)
-        compare(padded[1].monitorName, "HDMI-A-1")                    // real ws 6 kept as-is
+        var byId = {}; for (var i = 0; i < padded.length; i++) byId[padded[i].id] = padded[i]
+        for (var id = 2; id <= 5; id++) compare(byId[id].monitorName, "eDP-1", "ws " + id + " follows 1")
+        for (var id2 = 7; id2 <= 10; id2++) compare(byId[id2].monitorName, "HDMI-A-1", "ws " + id2 + " follows 6")
+        verify(byId[10].synthetic && !byId[10].occupied && !byId[10].focused)
+        verify(!byId[1].synthetic && !byId[6].synthetic)
         var r = Logic.layout({ monitors:[edp(), hdmi()], workspaces: padded,
             windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
         compare(r.boxes.length, 10)
-        var ids = []; for (var b = 0; b < 9; b++) ids.push(r.boxes[b].workspaceId)
-        compare(ids, [1,2,3,4,5,7,8,9,10])                            // eDP-1 group first, sorted
-        compare(r.boxes[9].workspaceId, 6)
+        var ids = []; for (var b = 0; b < r.boxes.length; b++) ids.push(r.boxes[b].workspaceId)
+        compare(ids, [1,2,3,4,5,6,7,8,9,10])
         compare(boxById(r, 10).occupied, false)
-        // off switch and no focused monitor: nothing synthesized
+        // a gap below the lowest real id leans on the nearest higher one; with no real
+        // workspaces at all the focused monitor hosts everything; off switch synthesizes nothing
+        var high = Logic.padWorkspaces([{id:4,monitorName:"HDMI-A-1",focused:true,occupied:true}], 4, "eDP-1")
+        for (var k = 0; k < high.length; k++) compare(high[k].monitorName, "HDMI-A-1")
+        compare(Logic.padWorkspaces([], 3, "eDP-1")[0].monitorName, "eDP-1")
         compare(Logic.padWorkspaces(real, 0, "eDP-1").length, 2)
-        compare(Logic.padWorkspaces(real, 10, "").length, 2)
+        compare(Logic.padWorkspaces([], 3, "").length, 0)
+    }
+    // Review finding: synthetic ids must not reorder groups. Real 2 on eDP-1 and 6 on HDMI-A-1,
+    // padded to 10, laid out with either monitor focused — same order, same geometry.
+    function test_padded_layout_is_focus_invariant() {
+        function lay(focusedMon) {
+            var real = [{id:2,monitorName:"eDP-1",focused:focusedMon==="eDP-1",occupied:true},
+                        {id:6,monitorName:"HDMI-A-1",focused:focusedMon==="HDMI-A-1",occupied:true}]
+            return Logic.layout({ monitors:[edp(),hdmi()],
+                workspaces: Logic.padWorkspaces(real, 10, focusedMon),
+                windows:[], focusedMonitorName:focusedMon, availW:1632, params:params })
+        }
+        var a = lay("eDP-1"), b = lay("HDMI-A-1")
+        compare(a.groups[0].monitorName, "eDP-1"); compare(b.groups[0].monitorName, "eDP-1")
+        compare(a.boxes.length, 10); compare(b.boxes.length, 10)
+        for (var i = 0; i < a.boxes.length; i++) {
+            var x = a.boxes[i], y = b.boxes[i]
+            compare([x.workspaceId, x.monitorName, x.x, x.y, x.w, x.h],
+                    [y.workspaceId, y.monitorName, y.x, y.y, y.w, y.h], "box " + i)
+        }
+        compare(a.canvasSize, b.canvasSize)
+        // ws 1 has no lower neighbour: it leans on 2 (eDP-1) whoever is focused
+        compare(boxById(b, 1).monitorName, "eDP-1")
+    }
+    // A group made only of synthetic wells still sorts deterministically (by its lowest id).
+    function test_order_falls_back_to_synthetic_ids_for_synthetic_only_group() {
+        var wss = [{id:3,monitorName:"eDP-1",focused:true,occupied:true},
+                   {id:1,monitorName:"HDMI-A-1",focused:false,occupied:false,synthetic:true}]
+        var r = Logic.layout({ monitors:[edp(),hdmi()], workspaces: wss,
+            windows:[], focusedMonitorName:"eDP-1", availW:1632, params:params })
+        compare(r.groups[0].monitorName, "HDMI-A-1"); compare(r.groups[1].monitorName, "eDP-1")
     }
     // missing/invalid availW must not corrupt geometry into NaN — degraded but usable
     function test_missing_availw_yields_safe_default() {

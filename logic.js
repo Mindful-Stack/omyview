@@ -6,21 +6,26 @@ function _index(arr, key) {
     return m
 }
 
-// Monitors that have workspaces, ordered by the lowest workspace id each one holds, so the
-// groups read 1..10 top to bottom. Fixed regardless of focus (and of screen position), so a
-// group never jumps when the overview is opened from the other screen; the focused group is
-// marked, not moved.
+// Monitors that have workspaces, ordered by the lowest REAL workspace id each one holds, so
+// the groups read 1..10 top to bottom. Synthetic wells (padWorkspaces) never take part in the
+// key — they are the one thing that may differ between two focus states — and a group with
+// only synthetic wells falls back to its lowest synthetic id. Fixed regardless of focus and
+// screen position: the focused group is marked, not moved.
 function _orderedMonitorNames(monitors, workspaces) {
-    var lowest = {}
+    var real = {}, any = {}
     for (var i = 0; i < workspaces.length; i++) {
         var ws = workspaces[i]; if (ws.id < 0) continue
-        if (!(ws.monitorName in lowest) || ws.id < lowest[ws.monitorName]) lowest[ws.monitorName] = ws.id
+        var m = ws.monitorName
+        if (!(m in any) || ws.id < any[m]) any[m] = ws.id
+        if (!ws.synthetic && (!(m in real) || ws.id < real[m])) real[m] = ws.id
     }
     var names = []
     for (var j = 0; j < monitors.length; j++)
-        if (monitors[j].name in lowest) names.push(monitors[j].name)
+        if (monitors[j].name in any) names.push(monitors[j].name)
+    function key(n) { return n in real ? real[n] : any[n] }
     names.sort(function (a, b) {
-        return lowest[a] !== lowest[b] ? lowest[a] - lowest[b] : (a < b ? -1 : a > b ? 1 : 0)
+        var ka = key(a), kb = key(b)
+        return ka !== kb ? ka - kb : (a < b ? -1 : a > b ? 1 : 0)
     })
     return names
 }
@@ -142,15 +147,39 @@ function recoverSlot(R, others, P) {
 
 // Pad `workspaces` so ids 1..count all appear, so the 1–0 keys always have a target even when
 // Hyprland has not created a workspace (a persistent rule whose monitor is absent, or no rule
-// at all). A synthesized workspace goes on the focused monitor, which is where Hyprland puts
-// it when jumped to. `count` <= 0 disables padding. Returns a new array; input untouched.
+// at all). A synthesized well is placed next to its numeric neighbours — on the monitor of the
+// nearest lower real workspace, else the nearest higher one — so where it is drawn depends
+// only on the real workspace→monitor mapping, never on focus (the layout must not move when
+// the overview opens from the other screen). Only when no real workspace exists at all does it
+// fall back to the focused monitor. Hyprland decides the actual monitor when the workspace is
+// created on jump or drop; the next rebuild then shows the truth. Synthesized entries carry
+// `synthetic: true` so ordering can ignore them. `count` <= 0 disables padding. Returns a new
+// array; input untouched.
 function padWorkspaces(workspaces, count, focusedMonitorName) {
     var out = workspaces.slice()
-    if (!(count > 0) || !focusedMonitorName) return out
-    var seen = {}
-    for (var i = 0; i < workspaces.length; i++) seen[workspaces[i].id] = true
-    for (var id = 1; id <= count; id++)
-        if (!seen[id]) out.push({ id: id, monitorName: focusedMonitorName, focused: false, occupied: false })
+    if (!(count > 0)) return out
+    var realIds = []
+    var monById = {}
+    for (var i = 0; i < workspaces.length; i++) {
+        var ws = workspaces[i]; if (ws.id < 0) continue
+        monById[ws.id] = ws.monitorName; realIds.push(ws.id)
+    }
+    realIds.sort(function (a, b) { return a - b })
+    function hostFor(id) {
+        var lower = -1, higher = -1
+        for (var k = 0; k < realIds.length; k++) {
+            if (realIds[k] < id) lower = realIds[k]
+            else if (higher < 0) { higher = realIds[k]; break }
+        }
+        if (lower >= 0) return monById[lower]
+        if (higher >= 0) return monById[higher]
+        return focusedMonitorName
+    }
+    for (var id = 1; id <= count; id++) {
+        if (id in monById) continue
+        var host = hostFor(id); if (!host) continue
+        out.push({ id: id, monitorName: host, focused: false, occupied: false, synthetic: true })
+    }
     return out
 }
 

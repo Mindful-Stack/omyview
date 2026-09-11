@@ -151,8 +151,10 @@ Optional user settings live in `~/.config/omarchy/omyview.json` (watched; edits 
 - `hint` — show the key hints under the workspace grid (default `true`).
 - `workspaces` — always show workspaces `1`..`N` (default `10`, matching the 1–0 keys), even
   ones Hyprland has not created yet, e.g. a `persistent:true` workspace whose monitor is
-  unplugged. A missing workspace is drawn as an empty well under the focused monitor, which is
-  where Hyprland creates it when you jump there. `0` shows only what Hyprland reports.
+  unplugged. A missing workspace is drawn as an empty well next to its numeric neighbours (on the
+  monitor of the nearest lower existing workspace), so the layout never depends on which screen
+  has focus; Hyprland decides the real monitor when you jump or drop there, and the picker then
+  follows. `0` shows only what Hyprland reports.
 - `motion` — `"auto"` (default) animates only when Hyprland's `animations:enabled` is on;
   `"full"` always animates; `"off"` never does (every duration is 0).
 

@@ -232,7 +232,11 @@ shaped like the other monitor.
 
 Hyprland only reports workspaces it has created (a `persistent:true` workspace whose monitor is
 unplugged is destroyed once empty), so `Logic.padWorkspaces` fills ids `1..workspaces` (config,
-default 10) as empty wells on the focused monitor, where Hyprland creates them on jump or drop.
+default 10) as empty wells next to their numeric neighbours (the monitor of the nearest lower real
+workspace, else the nearest higher; the focused monitor only when nothing real exists). They are
+flagged `synthetic` and ignored by the group-order key, so neither placement nor order can change
+with focus. Hyprland picks the real monitor when the workspace is created on jump or drop; the next
+rebuild shows it. A config change to `workspaces` while open triggers an immediate rebuild.
 
 ## Theme polish (2026-09-10)
 

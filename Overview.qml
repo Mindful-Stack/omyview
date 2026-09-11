@@ -608,6 +608,12 @@ Item {
         target: Hyprland
         function onRawEvent() { if (root.opened) root.scheduleRebuild() }
     }
+    // The watched config file changing the padded workspace count while open: the compositor
+    // data is not stale, so a plain rebuild re-lays the wells at once.
+    Connections {
+        target: config
+        function onWorkspacesChanged() { if (root.opened) root.rebuild() }
+    }
 
     PanelWindow {
         id: panel
@@ -711,9 +717,11 @@ Item {
                     width: implicitWidth; height: implicitHeight
                     implicitWidth: 100; implicitHeight: 100
 
-                    // group backdrop layer (lowest): only the focused monitor's group gets one
+                    // group backdrop layer (lowest): only the focused monitor's group gets one.
+                    // Keyed on panel.visible like the chips, so it fades out with the card
+                    // instead of popping out the moment close() drops `opened`.
                     Repeater {
-                        model: root.opened && root.groups.length > 1 ? root.groups : []
+                        model: panel.visible && root.groups.length > 1 ? root.groups : []
                         Rectangle {
                             objectName: "groupBackdrop"
                             required property var modelData

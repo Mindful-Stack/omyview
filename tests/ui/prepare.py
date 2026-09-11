@@ -55,8 +55,11 @@ tile = tile[:start] + '    Rectangle { anchors.fill: parent; color: tile.bg }\n\
 (dest / 'logic.js').write_text((source / 'logic.js').read_text())
 # Shell-only helpers: the config loader needs Quickshell.Io, the shadow a GPU shader.
 # `motionEffective` is writable here so tests can flip the policy without a compositor.
+# `workspaces` defaults to 0 (no padding) so the fixture shows exactly the compositor's
+# workspaces; tests that cover padding switch it on themselves.
 (dest / 'OmyviewConfig.qml').write_text(
     'import QtQuick\nQtObject { property bool scrim: true; property bool hint: true\n'
+    '           property int workspaces: 0\n'
     '           property string motion: "auto"; property string motionEffective: "full"\n'
     '           property bool motionResolved: true\n'
     '           function probeMotion() {} }\n')
