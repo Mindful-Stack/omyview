@@ -51,9 +51,12 @@ Item {
     // Motion vocabulary. Every duration and easing in the picker comes from here; tiles get it
     // as a property (they never import the shell). `scale` is a test hook (0 = instant);
     // config `motion: "off"` (or "auto" with Hyprland animations disabled) zeroes everything.
+    // Motion also stays off until the first probe has answered (config.motionResolved): with
+    // the component kept loaded, a fresh summon can race a probe that hasn't landed yet, and
+    // motion must never start on a guess.
     readonly property QtObject motion: QtObject {
         property real scale: 1
-        readonly property bool enabled: config.motionEffective !== "off" && scale > 0
+        readonly property bool enabled: config.motionEffective !== "off" && config.motionResolved && scale > 0
         readonly property int fast:   enabled ? Math.round(90 * scale) : 0
         readonly property int normal: enabled ? Math.round(160 * scale) : 0
         readonly property int enter:  enabled ? Math.round(200 * scale) : 0
@@ -538,6 +541,14 @@ Item {
         NumberAnimation { target: card; property: "scale"; to: 0.98
                           duration: root.motion.exit; easing.type: root.motion.move }
     }
+    // Motion switched off while an open/close animation is in flight (a late probe result,
+    // or a config edit): stop it and land on the final values at once. Layout Behaviors and
+    // tile appear animations already in flight finish at their correct targets on their own
+    // (≤ 160 ms) — only the enter/exit fade needs this nudge.
+    Connections {
+        target: root.motion
+        function onEnabledChanged() { if (!root.motion.enabled) root._showVisuals(root.opened) }
+    }
 
     // Ask Hyprland for fresh client data, then rebuild every 60ms until five quiet ticks have
     // passed, so a window opened while the overview is visible appears once its async geometry
@@ -767,7 +778,9 @@ Item {
                             title: model.title
                             dragging: root.draggingAddress === model.address
                             handle: root.handleByAddress[model.address] || null
-                            capMode: "live"
+                            // Kept loaded while hidden (keepLoaded): captures run only while the
+                            // surface is mapped.
+                            capMode: panel.visible ? "live" : "icon"
                             borderColor: root.dropTargetAddress === model.address ? root.accent : root.hairline
                             dropTarget: root.dropTargetAddress === model.address
                             dropSide: root.dropTargetAddress === model.address ? root.dropTargetSide : ""

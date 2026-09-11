@@ -26,8 +26,9 @@ removed `walker`.
   `Enter`, click a window to focus it, middle-click to close it. `Esc` or a click outside closes.
 - **Theme-aware.** Pulls the active Omarchy theme's colors and fonts, so it matches the bar
   and re-themes automatically.
-- **Zero idle cost.** It's an on-demand overlay — nothing (including captures) runs until you
-  summon it.
+- **Zero idle cost.** The component stays loaded with the shell so open and close can animate,
+  but nothing runs until you summon it: captures start when the surface is mapped and stop when
+  it hides.
 
 ---
 

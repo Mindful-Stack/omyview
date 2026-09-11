@@ -14,8 +14,10 @@ QtObject {
     // Hyprland's own animation switch, probed once per open (async, cheap) and cached. A
     // probe that cannot be read counts as enabled (Logic.hyprAnimationsEnabled).
     property bool hyprAnimations: true
+    // True once the first Hyprland probe has answered (or given up): motion never starts on a guess.
+    property bool motionResolved: false
     readonly property string motionEffective: Logic.motionPolicy(motion, hyprAnimations)
-    function probeMotion() { hyprProc.running = true }
+    function probeMotion() { hyprProc.running = true; probeFallback.restart() }
 
     readonly property string path: Quickshell.env("HOME") + "/.config/omarchy/omyview.json"
 
@@ -39,9 +41,18 @@ QtObject {
         command: ["hyprctl", "-j", "getoption", "animations:enabled"]
         stdout: StdioCollector {
             waitForEnd: true
-            onStreamFinished: cfg.hyprAnimations = Logic.hyprAnimationsEnabled(text)
+            onStreamFinished: {
+                cfg.hyprAnimations = Logic.hyprAnimationsEnabled(text)
+                cfg.motionResolved = true
+            }
         }
+        onExited: cfg.motionResolved = true
     }
+
+    // A missing/failing hyprctl must not leave motion off forever: give the probe 500ms, then
+    // resolve anyway (a probe that never lands counts as enabled, per Logic.hyprAnimationsEnabled's
+    // fail-open default).
+    property Timer probeFallback: Timer { interval: 500; onTriggered: cfg.motionResolved = true }
 
     // Warm the cache so the very first open already follows the compositor.
     Component.onCompleted: probeMotion()

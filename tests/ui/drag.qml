@@ -9,22 +9,37 @@ TestCase {
     property var view
     property var client
     Component { id: overview; Overview {} }
+    // Emulates the shell's per-plugin panel Loader (shell.qml:623-626): active while the
+    // manifest says keepLoaded, or while the shell has this id in openPanelIds (`open` here).
+    Component { id: shellLikeLoader
+        Loader {
+            property bool open: false
+            Manifest { id: manifest }
+            active: manifest.keepLoaded || open
+            sourceComponent: overview
+        }
+    }
     SignalSpy { id: boxesSpy; signalName: "boxesChanged" }   // rebuild() assigns root.boxes a fresh array each call
-    function init() {
-        view = createTemporaryObject(overview, tc)
-        verify(view !== null)
-        view.motion.scale = 0     // instant by default; timing tests set it to 1 themselves
+    // Compositor fixture shared by init() and any test that drives its own Overview instance
+    // (e.g. through shellLikeLoader) instead of the `view` init() creates.
+    function seed(v) {
         var mon = {name:"TEST", x:0, y:1440, width:1920, height:1080,
                    scale:1, lastIpcObject:{reserved:[0,26,0,0],transform:0}}
         client = {address:"0x123", at:[100,1540], size:[600,400], floating:false,
                   title:"Test", "class":"test", fullscreen:0}
-        view.compositor.monitors = {values:[mon]}
-        view.compositor.focusedMonitor = mon
-        view.compositor.focusedWorkspace = {id:1}
-        view.compositor.workspaces = {values:[
+        v.compositor.monitors = {values:[mon]}
+        v.compositor.focusedMonitor = mon
+        v.compositor.focusedWorkspace = {id:1}
+        v.compositor.workspaces = {values:[
             {id:1,monitor:mon,toplevels:{values:[{lastIpcObject:client}]}},
             {id:2,monitor:mon,toplevels:{values:[]}}
         ]}
+    }
+    function init() {
+        view = createTemporaryObject(overview, tc)
+        verify(view !== null)
+        view.motion.scale = 0     // instant by default; timing tests set it to 1 themselves
+        seed(view)
         view.open()
         wait(350)
     }
@@ -798,6 +813,75 @@ TestCase {
         mouseClick(tc, p.x, p.y, Qt.LeftButton)
         wait(250)
         compare(view.compositor.commands.length, 0, "no jump dispatched during the exit fade")
+    }
+    // Finding 1 (PR #10 review): shell.hide() calls close() and only then drops the id from
+    // openPanelIds; the shell's own panel Loader stays active across that only if the manifest
+    // says keepLoaded (shell.qml:480-495, 623-626) — otherwise the component is destroyed the
+    // instant close() returns and the exit fade never gets to play.
+    // Goes red if manifest.json ever reverts to keepLoaded: false: the emulated Loader would
+    // then deactivate on `loader.open = false` and loader.item would go null before the fade.
+    function test_shell_toggle_close_keeps_the_component_alive_for_the_exit_fade() {
+        var loader = createTemporaryObject(shellLikeLoader, tc)
+        loader.open = true
+        tryVerify(function() { return loader.item !== null })
+        var item = loader.item
+        seed(item)
+        item.motion.scale = 1
+        item.open()
+        wait(350)
+        // Emulate shell.hide(): close() first, then the shell drops the id from openPanelIds.
+        item.close()
+        loader.open = false
+        verify(loader.item !== null && loader.status === Loader.Ready,
+               "component survives the shell's hide")
+        verify(item.testPanel.visible, "surface still mapped for the fade")
+        verify(item.testCard.opacity > 0)
+        wait(250)
+        verify(!item.testPanel.visible)
+        // Re-summon through the same path: shell sets openPanelIds[id] = true, then calls open().
+        loader.open = true
+        item.open()
+        verify(item.opened, "re-summon through the same path works")
+    }
+    // Finding 2 (PR #10 review): motionEffective can flip to "off" mid-entrance (a late
+    // Hyprland probe, or a config edit); the already-running enterAnim must not keep going.
+    // Red before change D: opacity sits around 0.5 at the 50ms mark instead of snapping to 1.
+    function test_late_probe_result_off_settles_the_entrance() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.open()
+        wait(30)
+        verify(view.testCard.opacity < 1, "precondition: entrance in flight")
+        view.testConfig.motionEffective = "off"
+        wait(20)
+        compare(view.testCard.opacity, 1)
+        compare(view.testCard.scale, 1)
+        compare(view.testScrim.opacity, 1)
+        verify(!view.testEnterAnim.running)
+        view.close()
+        verify(!view.testPanel.visible, "with motion off, close hides at once")
+    }
+    // Finding 2 (PR #10 review), motionResolved half: motion must not start on a guess. While
+    // the first Hyprland probe hasn't answered, open() places the card at its final values with
+    // no entrance; once the probe resolves, only the *next* transition animates — a late
+    // resolution does not retroactively start an entrance for the one already placed.
+    // Red before change C: the fixture's OmyviewConfig has no motionResolved (TypeError), or
+    // once the stub carries one but Overview.qml does not gate on it (opacity < 1 while
+    // unresolved).
+    function test_motion_waits_for_the_first_probe() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.testConfig.motionResolved = false
+        view.open()
+        compare(view.testCard.opacity, 1, "unresolved policy: placed, not animated")
+        verify(!view.testEnterAnim.running)
+        view.testConfig.motionResolved = true
+        wait(20)
+        compare(view.testCard.opacity, 1, "a late 'on' does not start a retroactive entrance")
+        view.close()
+        verify(view.testPanel.visible, "…but the next transition animates")
+        wait(250)
+        verify(!view.testPanel.visible)
     }
     // ---- boxes model ----
     function boxItem(ws) {
