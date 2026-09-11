@@ -22,9 +22,10 @@ TestCase {
         compare(addrs(Logic.findMatches("SLACK", w)), ["a"])
         compare(addrs(Logic.findMatches("slack", w)), ["a"])
     }
-    // Distinguishes: no consecutive-character bonus (both would score the same base).
+    // Distinguishes: no consecutive-character bonus. The haystacks are equal length so the
+    // length penalty cannot carry the test.
     function test_consecutive_beats_gapped() {
-        var w = [win("gap", "axb", ""), win("run", "ab", "")]
+        var w = [win("gap", "axb", ""), win("run", "abx", "")]
         compare(addrs(Logic.findMatches("ab", w)), ["run", "gap"])
     }
     // Distinguishes: no word-start bonus ("foobar" is shorter, so it would win on length alone).
@@ -72,14 +73,24 @@ TestCase {
         compare(addrs(Logic.findMatches("ab", w)), ["word", "greedy"])
     }
     // Distinguishes: an alignment search that cannot skip a repeated character. "ss" against
-    // "s xs ss": the run at the end scores 1+3+1+2 = 7; any pairing of earlier s's is gapped.
-    function test_repeated_characters_pick_the_run() {
+    // "s xs ss": the best pairing is the two word-start s's (4 + 4 = 8); against "s xs xs" no
+    // pairing beats 4 + 1 = 5. Greedy first-occurrence scores both 5 and cannot tell them apart.
+    function test_repeated_characters_pick_best_pairing() {
         verify(Logic.fuzzyScore("ss", "s xs ss") > Logic.fuzzyScore("ss", "s xs xs"))
     }
     // Distinguishes: a result shape that leaks the sort key (`order`) or drops the score.
     function test_result_shape() {
         var res = Logic.findMatches("s", [win("a", "slack", "")])
         compare(Object.keys(res[0]).sort(), ["address", "score"])
+        verify(res[0].score > 0)
+    }
+    // Distinguishes: an uncapped length penalty. A 1-character query against a 300-character
+    // title with a single mid-word hit must still score above zero — without the cap the
+    // penalty (300 * 0.01 = 3.0) would outweigh the match (1), giving a negative score.
+    function test_long_title_still_scores_positive() {
+        var title = "x".repeat(150) + "q" + "x".repeat(149)
+        var res = Logic.findMatches("q", [win("a", "", title)])
+        compare(addrs(res), ["a"])
         verify(res[0].score > 0)
     }
 }

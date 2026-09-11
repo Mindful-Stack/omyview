@@ -670,6 +670,7 @@ function parseConfig(raw) {
 // jitters between keystrokes.
 var FIND_CLASS_BONUS = 2          // "slack" must rank the Slack app above a tab titled "Slack …"
 var FIND_LENGTH_PENALTY = 0.01    // per haystack character: shorter wins a tie
+var FIND_LENGTH_CAP = 80          // characters of haystack that count toward the penalty; beyond this length no longer discriminates
 function _wordStart(hay, i) {
     if (i === 0) return true
     var c = hay.charAt(i - 1)
@@ -679,7 +680,9 @@ function _wordStart(hay, i) {
 // Best alignment, not first occurrence: a dynamic programme over (query char, haystack
 // position). Per matched character: 1, +2 when it directly follows the previous matched
 // character, +3 at a word start. Greedy first-occurrence would trap "ab" on the isolated 'a' of
-// "xax ab" and miss the whole word. O(n·m) per haystack; n is a few characters.
+// "xax ab" and miss the whole word. O(n·m) per haystack; n is a few characters. The length
+// penalty is capped at FIND_LENGTH_CAP characters so a real match always scores above zero and
+// a very long title cannot outweigh a word-start bonus.
 function fuzzyScore(needle, hay) {
     var n = needle.length, m = hay.length
     if (!n || n > m) return null
@@ -700,7 +703,7 @@ function fuzzyScore(needle, hay) {
     }
     var best = NEG
     for (var k = 0; k < m; k++) if (prev[k] > best) best = prev[k]
-    return best === NEG ? null : best - m * FIND_LENGTH_PENALTY
+    return best === NEG ? null : best - Math.min(m, FIND_LENGTH_CAP) * FIND_LENGTH_PENALTY
 }
 function findMatches(query, windows) {
     var q = String(query || "").toLowerCase()
@@ -715,6 +718,9 @@ function findMatches(query, windows) {
         if (best === null) continue
         out.push({ address: w.address, score: best, order: i })
     }
+    // Scores are doubles; two mathematically equal scores from different haystack lengths can
+    // differ by float noise and skip the order tie-break — accepted, it needs lengths differing
+    // by a multiple of 100.
     out.sort(function (a, b) { return (b.score - a.score) || (a.order - b.order) })
     return out.map(function (m) { return { address: m.address, score: m.score } })
 }
