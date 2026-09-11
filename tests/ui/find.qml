@@ -289,6 +289,17 @@ TestCase {
         compare(view.selectedMatchAddress, "")
         compare(view.query, "w3")
     }
+    // Distinguishes: a rebuild that clears or unwinds the box selection when the last match
+    // closes. The window goes, the workspace stays — so the frame has somewhere to stay.
+    function test_no_matches_left_leaves_the_box_selection() {
+        seedThree(); type("w3")
+        compare(view.selectedId, 3)
+        view.compositor.workspaces.values[2].toplevels.values = []
+        view.rebuild()
+        compare(view.matches.length, 0)
+        compare(view.matchIndex, -1)
+        compare(view.selectedId, 3, "no matches left: the frame stays where it was")
+    }
     // Distinguishes: restoring via rebuild()'s nearest-position rule (would land on ws 3,
     // the box that took ws 2's position) instead of the focused workspace (ws 1).
     function test_clear_restores_focused_workspace_when_original_is_gone() {
@@ -301,6 +312,7 @@ TestCase {
         compare(view.query, "")
         compare(view.selectedId, 1, "focused workspace, not the nearest surviving position")
     }
+    // Distinguishes: preQuerySelectedId re-captured on every edit, or restore ignoring it.
     function test_clear_restores_the_pre_query_workspace() {
         keyClick(Qt.Key_Right)
         compare(view.selectedId, 2)
@@ -321,17 +333,18 @@ TestCase {
         view.rebuild()
         verify(view.testFlick.contentHeight > view.testFlick.height + 100, "fixture must overflow")
     }
-    function boxVisible(wsId) {
+    // Vertical axis only: the fixture has no horizontal overflow (contentWidth == width), so contentX never moves.
+    function boxRowVisible(wsId) {
         var b = boxOf(wsId), f = view.testFlick
         return b.y >= f.contentY - 0.5 && b.y + b.h <= f.contentY + f.height + 0.5
     }
     // Distinguishes: moving selectedIndex without ensureSelectedVisible() (frame offscreen).
     function test_typing_scrolls_the_match_into_view() {
         seedOverflow()
-        verify(!boxVisible(40), "ws 40 starts out of view")
+        verify(!boxRowVisible(40), "ws 40 starts out of view")
         type("needle")
         compare(view.selectedId, 40)
-        verify(boxVisible(40), "typing must scroll the match into view")
+        verify(boxRowVisible(40), "typing must scroll the match into view")
     }
     // "e" matches "edge" (ws 1, rank 1: word-start 'e' and class bonus, shorter) and "needle"
     // (ws 40). Tab moves from the visible top row to the last row; it must scroll.
@@ -341,24 +354,25 @@ TestCase {
         view.rebuild()
         type("e")
         compare(view.matches.length, 2)
-        compare(view.selectedId, 1); verify(boxVisible(1)); verify(!boxVisible(40))
+        compare(view.selectedId, 1); verify(boxRowVisible(1)); verify(!boxRowVisible(40))
         keyClick(Qt.Key_Tab)
         compare(view.selectedId, 40)
-        verify(boxVisible(40), "cycling must scroll the new selection into view")
+        verify(boxRowVisible(40), "cycling must scroll the new selection into view")
         keyClick(Qt.Key_Tab)
         compare(view.selectedId, 1)
-        verify(boxVisible(1), "and back")
+        verify(boxRowVisible(1), "and back")
     }
+    // Distinguishes: restorePreQuerySelection moving selectedIndex without ensureSelectedVisible().
     function test_restore_scrolls_the_pre_query_box_into_view() {
         seedOverflow()
         for (var i = 0; i < 7; i++) keyClick(Qt.Key_Down)   // walk the selection to the last row
         compare(view.selectedId, 36)
-        verify(boxVisible(36))
+        verify(boxRowVisible(36))
         type("hay")                                     // match on ws 1: scrolls to the top
-        compare(view.selectedId, 1); verify(boxVisible(1)); verify(!boxVisible(36))
+        compare(view.selectedId, 1); verify(boxRowVisible(1)); verify(!boxRowVisible(36))
         keyClick(Qt.Key_Escape)
         compare(view.selectedId, 36)
-        verify(boxVisible(36), "restoring must scroll the pre-query box into view")
+        verify(boxRowVisible(36), "restoring must scroll the pre-query box into view")
     }
     // Task 4 review carry-forward: rematchAfterRebuild() must scroll when the rebuild changes
     // the selected match (only a kept match suppresses the scroll). Seed the overflow layout
@@ -373,7 +387,7 @@ TestCase {
         type("e")
         compare(view.matches.length, 2)
         compare(view.selectedMatchAddress, "0xE"); compare(view.selectedId, 1)
-        verify(boxVisible(1)); verify(!boxVisible(40))
+        verify(boxRowVisible(1)); verify(!boxRowVisible(40))
         view.compositor.workspaces.values[0].toplevels.values =
             view.compositor.workspaces.values[0].toplevels.values.filter(
                 function (t) { return t.lastIpcObject.address !== "0xE" })
@@ -381,6 +395,6 @@ TestCase {
         compare(view.matches.length, 1)
         compare(view.selectedMatchAddress, "0xN")
         compare(view.selectedId, 40)
-        verify(boxVisible(40), "a rebuild that changes the match must scroll to it")
+        verify(boxRowVisible(40), "a rebuild that changes the match must scroll to it")
     }
 }
