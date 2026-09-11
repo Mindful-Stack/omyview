@@ -59,4 +59,14 @@ TestCase {
         keyClick(Qt.Key_Escape)
         compare(view.opened, false, "Escape must close via the key handler")
     }
+
+    // Distinguishes: a fixture where keyClick("3") (the string path QTest::asciiToKey takes,
+    // which every type() call uses) does not reach Keys.onPressed. A digit with an empty query
+    // jumps and closes — an effect only the handler produces.
+    function test_character_keys_reach_the_catcher() {
+        type("3")
+        compare(view.opened, false, "a digit typed as a string must reach Keys.onPressed")
+        compare(view.compositor.commands.length, 1)
+        verify(view.compositor.commands[0].indexOf('workspace = "3"') >= 0)
+    }
 }
