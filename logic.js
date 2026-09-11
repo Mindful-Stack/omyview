@@ -662,3 +662,59 @@ function parseConfig(raw) {
         motion: (o.motion === "full" || o.motion === "off") ? o.motion : "auto"
     }
 }
+
+// ---- Find (docs/specs/2026-09-11-find-design.md) ----------------------------------------
+// Fuzzy subsequence ranking over class and title. Pure: the Overview hands in the window list
+// `buildInput()` produced (special workspaces already excluded) in layout order, and gets back
+// `[{ address, score }]`, best first. Equal scores keep input order, so the ranking never
+// jitters between keystrokes.
+var FIND_CLASS_BONUS = 2          // "slack" must rank the Slack app above a tab titled "Slack …"
+var FIND_LENGTH_PENALTY = 0.01    // per haystack character: shorter wins a tie
+function _wordStart(hay, i) {
+    if (i === 0) return true
+    var c = hay.charAt(i - 1)
+    return c === " " || c === "-" || c === "_" || c === "." || c === "/" || c === ":"
+}
+// Score of `needle` as a subsequence of `hay` (both lowercase), or null when it is not one.
+// Best alignment, not first occurrence: a dynamic programme over (query char, haystack
+// position). Per matched character: 1, +2 when it directly follows the previous matched
+// character, +3 at a word start. Greedy first-occurrence would trap "ab" on the isolated 'a' of
+// "xax ab" and miss the whole word. O(n·m) per haystack; n is a few characters.
+function fuzzyScore(needle, hay) {
+    var n = needle.length, m = hay.length
+    if (!n || n > m) return null
+    var NEG = -Infinity, prev = null
+    for (var i = 0; i < n; i++) {
+        var c = needle.charAt(i), cur = new Array(m), bestBefore = NEG   // best of prev[0..j-1]
+        for (var j = 0; j < m; j++) {
+            if (i > 0 && j >= 1 && prev[j - 1] > bestBefore) bestBefore = prev[j - 1]
+            cur[j] = NEG
+            if (hay.charAt(j) !== c) continue
+            var base = 1 + (_wordStart(hay, j) ? 3 : 0)
+            if (i === 0) { cur[j] = base; continue }
+            var from = bestBefore                                   // gapped
+            if (j >= 1 && prev[j - 1] !== NEG && prev[j - 1] + 2 > from) from = prev[j - 1] + 2   // consecutive
+            if (from !== NEG) cur[j] = from + base
+        }
+        prev = cur
+    }
+    var best = NEG
+    for (var k = 0; k < m; k++) if (prev[k] > best) best = prev[k]
+    return best === NEG ? null : best - m * FIND_LENGTH_PENALTY
+}
+function findMatches(query, windows) {
+    var q = String(query || "").toLowerCase()
+    if (!q.length) return []
+    var out = []
+    for (var i = 0; i < windows.length; i++) {
+        var w = windows[i]
+        var sc = fuzzyScore(q, String(w.cls || "").toLowerCase())
+        if (sc !== null) sc += FIND_CLASS_BONUS
+        var st = fuzzyScore(q, String(w.title || "").toLowerCase())
+        var best = sc === null ? st : (st === null ? sc : Math.max(sc, st))
+        if (best === null) continue
+        out.push({ address: w.address, score: best, order: i })
+    }
+    out.sort(function (a, b) { return (b.score - a.score) || (a.order - b.order) })
+    return out.map(function (m) { return { address: m.address, score: m.score } })
+}
