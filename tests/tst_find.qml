@@ -93,4 +93,26 @@ TestCase {
         compare(addrs(res), ["a"])
         verify(res[0].score > 0)
     }
+    // Distinguishes: accepting any non-empty text (Backspace/Escape/Return/Tab all carry text).
+    function test_control_characters_never_append() {
+        compare(Logic.appendQueryText("ab", "\b"), "ab")
+        compare(Logic.appendQueryText("ab", "\x1b"), "ab")
+        compare(Logic.appendQueryText("ab", "\r"), "ab")
+        compare(Logic.appendQueryText("ab", "\t"), "ab")
+        compare(Logic.appendQueryText("ab", "\x7f"), "ab")
+        compare(Logic.appendQueryText("ab", ""), "ab")
+    }
+    // Distinguishes: space starting a query (spec: space never starts one) vs space inside one.
+    function test_space_only_inside_a_query() {
+        compare(Logic.appendQueryText("", " "), "")
+        compare(Logic.appendQueryText("slack", " "), "slack ")
+    }
+    // Distinguishes: a filter that drops digits or punctuation (the digit-jump decision is the
+    // key handler's, not this function's).
+    function test_printable_appends() {
+        compare(Logic.appendQueryText("", "s"), "s")
+        compare(Logic.appendQueryText("s", "2"), "s2")
+        compare(Logic.appendQueryText("s", "-"), "s-")
+        compare(Logic.appendQueryText("s", "å"), "så")
+    }
 }

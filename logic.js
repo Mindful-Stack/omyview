@@ -724,3 +724,17 @@ function findMatches(query, windows) {
     out.sort(function (a, b) { return (b.score - a.score) || (a.order - b.order) })
     return out.map(function (m) { return { address: m.address, score: m.score } })
 }
+// Does a key event's `text` extend the query? Returns the new query, or `query` unchanged.
+// Control characters never do (Backspace, Escape, Return and Tab all arrive with non-empty
+// text on Qt), and whitespace never starts a query. Digits are accepted here: whether a digit
+// jumps instead is decided by the key handler, from whether the query is empty.
+function appendQueryText(query, text) {
+    var q = String(query || ""), t = String(text || "")
+    if (!t.length) return q
+    for (var i = 0; i < t.length; i++) {
+        var c = t.charCodeAt(i)
+        if (c < 0x20 || c === 0x7f) return q
+    }
+    if (!q.length && !t.trim().length) return q
+    return q + t
+}
