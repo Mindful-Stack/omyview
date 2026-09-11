@@ -65,6 +65,13 @@ Item {
         readonly property int hover: Easing.OutQuad       // hover, lift, release
         readonly property int entrance: Easing.OutBack    // overshoot is deliberately small; raise towards Qt's 1.70158 default if the entrance feels flat
         readonly property real overshoot: 1.2             // Qt default is 1.70158; "small"
+        // Motion switched off while an open/close animation is in flight (a late probe result,
+        // or a config edit): stop it and land on the final values at once. Layout Behaviors and
+        // tile appear animations already in flight finish at their correct targets on their own
+        // (≤ 160 ms) — only the enter/exit fade needs this nudge. Handled here rather than in a
+        // Connections element: Connections has its own `enabled` property, so an
+        // `onEnabledChanged` handler inside one is rejected by Qt 6.4 as a duplicate method.
+        onEnabledChanged: if (!enabled) root._showVisuals(root.opened)
     }
     // Layout Behaviors (frame, tiles, boxes, card size) run only when motion is on and the
     // entrance is not playing: delegates are created at their final geometry, and the settle
@@ -556,15 +563,6 @@ Item {
         NumberAnimation { target: card; property: "scale"; to: 0.98
                           duration: root.motion.exit; easing.type: root.motion.move }
     }
-    // Motion switched off while an open/close animation is in flight (a late probe result,
-    // or a config edit): stop it and land on the final values at once. Layout Behaviors and
-    // tile appear animations already in flight finish at their correct targets on their own
-    // (≤ 160 ms) — only the enter/exit fade needs this nudge.
-    Connections {
-        target: root.motion
-        function onEnabledChanged() { if (!root.motion.enabled) root._showVisuals(root.opened) }
-    }
-
     // Ask Hyprland for fresh client data, then rebuild every 60ms until five quiet ticks have
     // passed, so a window opened while the overview is visible appears once its async geometry
     // arrives — a single immediate rebuild would read stale/empty `lastIpcObject` geometry.
