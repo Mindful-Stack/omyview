@@ -88,7 +88,8 @@ empty query.
 
 ## Visuals (query non-empty)
 
-- **Tiles.** A matching tile draws an accent outline (the existing `borderColor` input); the
+- **Tiles.** A matching tile draws an accent outline (a dedicated `accent` input on the tile,
+  not `borderColor`, so a drop-target border and a match ring stay distinguishable); the
   selected match draws it at 2 px and the selection frame moves to that match's workspace box.
   Non-matching tiles fade to 0.35 opacity. Both changes animate with `motion.fast` / `motion.hover`
   and are instant with motion off.
@@ -131,7 +132,8 @@ Both then update the tile roles `matched` and `selectedMatch` via `setTileRoles`
 `hl.dsp.focus({ window = "address:<addr>" })` and `root.close()` — the same two lines the tile
 click uses.
 
-`FindBar.qml` is display-only: properties `query`, `count`, `index`, `active`, plus theme
+`FindBar.qml` is display-only: properties `query`, `count`, `index` (visibility is the
+caller's, bound to the query being non-empty), plus theme
 inputs; no key handling, no focus. The key catcher remains the single focus item.
 
 ## Edge cases
@@ -139,7 +141,8 @@ inputs; no key handling, no focus. The key catcher remains the single focus item
 - `open()` resets `query`, `matches`, `matchIndex`; a kept-loaded overlay never shows a stale
   filter.
 - A drag with a query active behaves as today; the drop-target highlight takes precedence over the
-  match outline on that one tile while the drag lasts.
+  match outline on that one tile while the drag lasts, and that tile is never dimmed, so the drop
+  border and insertion preview stay fully readable.
 - The selection frame never leaves the current match on a rebuild unless that window is gone
   (successor rule above).
 - Hyprland forwards SUPER chords over the overlay's exclusive focus (verified in v1), so SUPER+P
