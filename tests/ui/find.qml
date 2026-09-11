@@ -201,4 +201,186 @@ TestCase {
         type("secretpad")
         compare(view.matches.length, 0, "on a special workspace it is not in the input at all")
     }
+
+    function boxOf(wsId) {
+        for (var i = 0; i < view.boxes.length; i++) if (view.boxes[i].workspaceId === wsId) return view.boxes[i]
+        fail("no box for workspace " + wsId)
+    }
+    // Distinguishes: Tab not cycling, cycling not wrapping, Shift+Tab going forward, and the
+    // frame not following the match's workspace.
+    function test_cycle_wraps_and_moves_the_frame() {
+        type("slack")                                  // ranked: 0xB (ws2), 0xA (ws1)
+        compare(view.selectedId, 2)
+        keyClick(Qt.Key_Tab)
+        compare(view.selectedMatchAddress, "0xA"); compare(view.selectedId, 1)
+        keyClick(Qt.Key_Tab)
+        compare(view.selectedMatchAddress, "0xB", "wraps to the first")
+        keyClick(Qt.Key_Backtab, Qt.ShiftModifier)
+        compare(view.selectedMatchAddress, "0xA", "Shift+Tab goes back")
+        keyClick(Qt.Key_Down)
+        compare(view.selectedMatchAddress, "0xB", "arrows cycle too while a query is active")
+        compare(row("0xB").selectedMatch, true); compare(row("0xA").selectedMatch, false)
+    }
+    // Distinguishes: the pre-fix rule "keep the selected address if it still matches" on a
+    // query EDIT. Seed: "sa" (0xP) and "xsa" (0xQ). For "s" 0xP ranks first (word start);
+    // Tab selects 0xQ; typing "a" keeps 0xQ matching but 0xP is rank 1 again and must win.
+    function test_query_edit_always_selects_rank_one() {
+        view.compositor.workspaces.values = [
+            wsRow(1, [client("0xP", "sa", "", 100)]),
+            wsRow(2, [client("0xQ", "xsa", "", 100)])
+        ]
+        view.rebuild()
+        type("s")
+        compare(view.selectedMatchAddress, "0xP")
+        keyClick(Qt.Key_Tab)
+        compare(view.selectedMatchAddress, "0xQ")
+        type("a")
+        compare(view.matches.length, 2, "both still match 'sa'")
+        compare(view.selectedMatchAddress, "0xP", "an edit re-selects rank 1")
+    }
+    // Distinguishes: a rebuild applying the edit rule (would snap back to rank 1).
+    function test_rebuild_keeps_the_selected_address() {
+        type("slack")
+        keyClick(Qt.Key_Tab)
+        compare(view.selectedMatchAddress, "0xA")
+        view.rebuild()
+        compare(view.selectedMatchAddress, "0xA")
+        compare(row("0xA").selectedMatch, true)
+    }
+    // Successor rule. Seed three matches w1, w2, w3 (classes "w1".."w3", ranked in order:
+    // equal scores keep input order). Remove the selected one at middle / last / sole.
+    function seedThree() {
+        view.compositor.workspaces.values = [
+            wsRow(1, [client("0x1", "w1", "", 100)]),
+            wsRow(2, [client("0x2", "w2", "", 100)]),
+            wsRow(3, [client("0x3", "w3", "", 100)])
+        ]
+        view.rebuild()
+    }
+    function removeWorkspace(id) {
+        view.compositor.workspaces.values = view.compositor.workspaces.values.filter(
+            function (w) { return w.id !== id })
+        view.rebuild()
+    }
+    // Distinguishes: "else 0" (would select 0x1) from the clamped old index (new 2nd = 0x3).
+    function test_removed_middle_match_selects_its_successor() {
+        seedThree(); type("w")
+        keyClick(Qt.Key_Tab); compare(view.selectedMatchAddress, "0x2")
+        removeWorkspace(2)
+        compare(view.matches.length, 2)
+        compare(view.selectedMatchAddress, "0x3")
+        compare(view.selectedId, 3)
+    }
+    // Distinguishes: an unclamped index (out of range → no selection) from the new last.
+    function test_removed_last_match_selects_new_last() {
+        seedThree(); type("w")
+        keyClick(Qt.Key_Tab); keyClick(Qt.Key_Tab); compare(view.selectedMatchAddress, "0x3")
+        removeWorkspace(3)
+        compare(view.matches.length, 2)
+        compare(view.selectedMatchAddress, "0x2")
+    }
+    // Distinguishes: a stale selectedMatchAddress or a query that gets cleared by the rebuild.
+    function test_removed_sole_match_leaves_no_selection_but_keeps_the_query() {
+        seedThree(); type("w3")
+        compare(view.matches.length, 1); compare(view.selectedMatchAddress, "0x3")
+        removeWorkspace(3)
+        compare(view.matches.length, 0)
+        compare(view.matchIndex, -1)
+        compare(view.selectedMatchAddress, "")
+        compare(view.query, "w3")
+    }
+    // Distinguishes: restoring via rebuild()'s nearest-position rule (would land on ws 3,
+    // the box that took ws 2's position) instead of the focused workspace (ws 1).
+    function test_clear_restores_focused_workspace_when_original_is_gone() {
+        keyClick(Qt.Key_Right)                          // box selection: ws 2
+        compare(view.selectedId, 2)
+        type("foot")                                    // match on ws 3
+        compare(view.selectedId, 3)
+        removeWorkspace(2)
+        keyClick(Qt.Key_Escape)
+        compare(view.query, "")
+        compare(view.selectedId, 1, "focused workspace, not the nearest surviving position")
+    }
+    function test_clear_restores_the_pre_query_workspace() {
+        keyClick(Qt.Key_Right)
+        compare(view.selectedId, 2)
+        type("foot")
+        compare(view.selectedId, 3)
+        keyClick(Qt.Key_Escape)
+        compare(view.selectedId, 2)
+    }
+    // Visibility on an overflowing layout: 40 workspaces on one monitor (8 rows of 5) exceed
+    // the 736 px card. The test asserts the overflow as a precondition so a layout change
+    // that stops overflowing fails loudly instead of passing vacuously.
+    function seedOverflow() {
+        var rows = []
+        for (var i = 1; i <= 40; i++)
+            rows.push(wsRow(i, i === 40 ? [client("0xN", "needle", "needle", 100)]
+                              : i === 1 ? [client("0xH", "hay", "hay", 100)] : []))
+        view.compositor.workspaces.values = rows
+        view.rebuild()
+        verify(view.testFlick.contentHeight > view.testFlick.height + 100, "fixture must overflow")
+    }
+    function boxVisible(wsId) {
+        var b = boxOf(wsId), f = view.testFlick
+        return b.y >= f.contentY - 0.5 && b.y + b.h <= f.contentY + f.height + 0.5
+    }
+    // Distinguishes: moving selectedIndex without ensureSelectedVisible() (frame offscreen).
+    function test_typing_scrolls_the_match_into_view() {
+        seedOverflow()
+        verify(!boxVisible(40), "ws 40 starts out of view")
+        type("needle")
+        compare(view.selectedId, 40)
+        verify(boxVisible(40), "typing must scroll the match into view")
+    }
+    // "e" matches "edge" (ws 1, rank 1: word-start 'e' and class bonus, shorter) and "needle"
+    // (ws 40). Tab moves from the visible top row to the last row; it must scroll.
+    function test_cycling_scrolls_into_view() {
+        seedOverflow()
+        view.compositor.workspaces.values[0].toplevels.values.push({ lastIpcObject: client("0xE", "edge", "edge", 700) })
+        view.rebuild()
+        type("e")
+        compare(view.matches.length, 2)
+        compare(view.selectedId, 1); verify(boxVisible(1)); verify(!boxVisible(40))
+        keyClick(Qt.Key_Tab)
+        compare(view.selectedId, 40)
+        verify(boxVisible(40), "cycling must scroll the new selection into view")
+        keyClick(Qt.Key_Tab)
+        compare(view.selectedId, 1)
+        verify(boxVisible(1), "and back")
+    }
+    function test_restore_scrolls_the_pre_query_box_into_view() {
+        seedOverflow()
+        for (var i = 0; i < 7; i++) keyClick(Qt.Key_Down)   // walk the selection to the last row
+        compare(view.selectedId, 36)
+        verify(boxVisible(36))
+        type("hay")                                     // match on ws 1: scrolls to the top
+        compare(view.selectedId, 1); verify(boxVisible(1)); verify(!boxVisible(36))
+        keyClick(Qt.Key_Escape)
+        compare(view.selectedId, 36)
+        verify(boxVisible(36), "restoring must scroll the pre-query box into view")
+    }
+    // Task 4 review carry-forward: rematchAfterRebuild() must scroll when the rebuild changes
+    // the selected match (only a kept match suppresses the scroll). Seed the overflow layout
+    // with a second matching window "edge" in the top row so "e" matches both edge (rank 1,
+    // ws 1) and needle (ws 40); remove edge so the successor (needle) is the new match, which
+    // sits in the last row and must be scrolled into view. Fails if followMatch is ever called
+    // with `false` unconditionally.
+    function test_rebuild_that_changes_the_match_scrolls_to_it() {
+        seedOverflow()
+        view.compositor.workspaces.values[0].toplevels.values.push({ lastIpcObject: client("0xE", "edge", "edge", 700) })
+        view.rebuild()
+        type("e")
+        compare(view.matches.length, 2)
+        compare(view.selectedMatchAddress, "0xE"); compare(view.selectedId, 1)
+        verify(boxVisible(1)); verify(!boxVisible(40))
+        view.compositor.workspaces.values[0].toplevels.values =
+            view.compositor.workspaces.values[0].toplevels.values.filter(
+                function (t) { return t.lastIpcObject.address !== "0xE" })
+        view.rebuild()
+        compare(view.matches.length, 1)
+        compare(view.selectedMatchAddress, "0xN")
+        compare(view.selectedId, 40)
+        verify(boxVisible(40), "a rebuild that changes the match must scroll to it")
+    }
 }
