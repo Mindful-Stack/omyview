@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "se.mindfulstack.omyview",
   "name": "Omyview",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "Mindful Stack",
   "description": "Live-preview overview of all workspaces, grouped by monitor, with drag-and-drop",
   "kinds": ["overlay"],

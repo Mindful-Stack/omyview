@@ -294,6 +294,30 @@ function tiledDropPlan(candidates, sameWorkspace, own, cx, cy) {
     return { anchor: best.address, side: dropSide(best, cx, cy) }
 }
 
+// Lua statement defining `run(d)`: dispatch `d` and raise when the compositor reports failure.
+// hl.dispatch never raises (Hyprland 0.56.2, LuaBindingsToplevel.cpp hlDispatch): a failed
+// dispatcher — even one that hit a Lua error internally — comes back as { ok = false,
+// error = "..." }. Raising inside our pcall turns that into the failure path: the sequence
+// stops, the guarded cleanup runs, and reportLua names the failed step.
+function dispatchGuardLua() {
+    return 'local function run(d) local r = hl.dispatch(d) if r and r.ok == false then error(tostring(r.error), 0) end return r end'
+}
+
+// Lua statements that report a failure captured as `ok, err` (from pcall) for the operation
+// `what`: to the compositor log (Hyprland rebinds `print` to its log with a [Lua] prefix) and
+// as an on-screen notification (guarded: hl.notification is missing on older Hyprland). Errors
+// inside our own pcall are otherwise invisible — the compositor only logs uncaught ones.
+// Returns newline-separated statements; the outermost chunk builder must flatten to one line.
+function reportLua(what) {
+    return (
+        'if not ok then\n' +
+        '  local msg = "omyview: ' + what + ' failed: " .. tostring(err)\n' +
+        '  print(msg)\n' +
+        '  pcall(function() hl.notification.create({ text = msg, duration = 4000, icon = "error" }) end)\n' +
+        'end'
+    )
+}
+
 // One atomic Lua chunk (Hyprland Lua-config mode evaluates `dispatch` payloads as
 // `hl.dispatch(<payload>)`, and accepts a function) that replays a native tiled drop:
 //   strip the target workspace's fullscreen window (and the dragged window's own fullscreen,
@@ -311,8 +335,11 @@ function tiledDropPlan(candidates, sameWorkspace, own, cx, cy) {
 // user's force_split, and use_active_for_splits is turned off on the focused monitor's active
 // workspace so the anchor is the window under the cursor rather than the focused window.
 // Hidden workspaces keep use_active on: there dwindle already falls back to the closest node
-// by geometry. Everything runs inside the compositor before the next frame, so nothing flashes,
-// and config, cursor and focus are restored even if a step throws.
+// by geometry. Everything runs inside the compositor before the next frame, so nothing flashes.
+// The risky steps run in a pcall; the un-float, both fullscreen re-applies and the config
+// restore are separate guarded steps that re-read state, so a throw never leaves the window
+// floating, and the error is reported (log + notification). Layouts other than dwindle get a
+// plain silent move: the cursor-based insert is dwindle behaviour.
 function tiledInsertLua(addr, targetWs, placement) {
     var ws = String(parseInt(targetWs, 10))
     var gx = Math.round(placement.x), gy = Math.round(placement.y)
@@ -327,6 +354,17 @@ function tiledInsertLua(addr, targetWs, placement) {
         '  local anchorSel = ' + anchorSel + '\n' +
         '  local prevW = hl.get_active_window()\n' +
         '  local cur = hl.get_cursor_pos()\n' +
+        '  ' + dispatchGuardLua() + '\n' +
+        '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
+        '  local layout = hl.get_config("general.layout")\n' +
+        '  if layout ~= nil and layout ~= "dwindle" then\n' +
+        '    local ok, err = pcall(function()\n' +
+        '      if not same then run(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
+        '    end)\n' +
+        '    ' + reportLua('tiled insert') + '\n' +
+        '    ' + restoreFocusLua('prevW', 'cur') + '\n' +
+        '    return\n' +
+        '  end\n' +
         '  local smart = hl.get_config("dwindle.smart_split")\n' +
         '  local useActive = hl.get_config("dwindle.use_active_for_splits")\n' +
         '  local aws = hl.get_active_workspace()\n' +
@@ -340,15 +378,14 @@ function tiledInsertLua(addr, targetWs, placement) {
         '  if fa ~= "" and fa:sub(1, 2) ~= "0x" then fa = "0x" .. fa end\n' +
         '  local fsSel = fa ~= "" and ("address:" .. fa) or nil\n' +
         '  local fsMode = fsWin and tws.fullscreen_mode or 0\n' +
-        '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
         '  local ownMode = same and w.fullscreen or 0\n' +
         '  hl.config({ dwindle = { smart_split = true, use_active_for_splits = not onActive } })\n' +
-        '  pcall(function()\n' +
+        '  local ok, err = pcall(function()\n' +
         '    if fsSel then ' + fullscreenBodyLua('fsSel', '0') + ' end\n' +
         '    ' + fullscreenBodyLua('sel', '0') + '\n' +
-        '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
+        '    run(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
         '    if not same then\n' +
-        '      hl.dispatch(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel }))\n' +
+        '      run(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel }))\n' +
         '    end\n' +
         '    local x, y = ' + gx + ', ' + gy + '\n' +
         '    local a = anchorSel and hl.get_window(anchorSel) or nil\n' +
@@ -360,12 +397,19 @@ function tiledInsertLua(addr, targetWs, placement) {
         '      elseif "' + side + '" == "top" then y = a.at.y + inset\n' +
         '      elseif "' + side + '" == "bottom" then y = a.at.y + a.size.y - 1 - inset end\n' +
         '    end\n' +
-        '    hl.dispatch(hl.dsp.cursor.move({ x = math.floor(x + 0.5), y = math.floor(y + 0.5) }))\n' +
-        '    hl.dispatch(hl.dsp.window.float({ window = sel, action = "toggle" }))\n' +
-        '    if fsSel and fsSel ~= sel then ' + fullscreenBodyLua('fsSel', 'fsMode') + ' end\n' +
-        '    if ownMode ~= 0 then ' + fullscreenBodyLua('sel', 'ownMode') + ' end\n' +
+        '    run(hl.dsp.cursor.move({ x = math.floor(x + 0.5), y = math.floor(y + 0.5) }))\n' +
         '  end)\n' +
+        // Cleanup. On success the un-float IS the re-tile (at the cursor). Each step re-reads
+        // state and is guarded on its own, so a failure above — or in an earlier cleanup step —
+        // never leaves the window floating, the workspace un-fullscreened, or the config changed.
+        // The window was tiled on entry, so any floating state here is ours to undo. A failing
+        // cleanup step folds into ok/err so it is reported too (the first error wins).
+        '  local function step(f) local g, e = pcall(f) if not g then ok, err = false, err or e end end\n' +
+        '  step(function() local fw = hl.get_window(sel); if fw and fw.floating then run(hl.dsp.window.float({ window = sel, action = "toggle" })) end end)\n' +
+        '  step(function() if fsSel and fsSel ~= sel then ' + fullscreenBodyLua('fsSel', 'fsMode') + ' end end)\n' +
+        '  step(function() if ownMode ~= 0 then ' + fullscreenBodyLua('sel', 'ownMode') + ' end end)\n' +
         '  hl.config({ dwindle = { smart_split = smart, use_active_for_splits = useActive } })\n' +
+        '  ' + reportLua('tiled insert') + '\n' +
         '  ' + restoreFocusLua('prevW', 'cur') + '\n' +
         'end'
     ).replace(/\n\s*/g, ' ')
@@ -385,7 +429,7 @@ function fullscreenBodyLua(sel, modeExpr) {
         'do local fw, fm = hl.get_window(' + sel + '), ' + modeExpr + '\n' +
         '  if fw and fm and fw.fullscreen ~= fm then\n' +
         '    local name = (fm == 1 or (fm == 0 and fw.fullscreen == 1)) and "maximized" or "fullscreen"\n' +
-        '    hl.dispatch(hl.dsp.window.fullscreen({ window = ' + sel + ', mode = name, action = "toggle" }))\n' +
+        '    run(hl.dsp.window.fullscreen({ window = ' + sel + ', mode = name, action = "toggle" }))\n' +
         '  end\n' +
         'end'
     )
@@ -419,10 +463,40 @@ function unfullscreenLua(addr) {
     return (
         'function()\n' +
         '  local prevW, cur = hl.get_active_window(), hl.get_cursor_pos()\n' +
-        '  pcall(function()\n' +
+        '  ' + dispatchGuardLua() + '\n' +
+        '  local ok, err = pcall(function()\n' +
         fullscreenBodyLua('"address:' + addr + '"', '0') + '\n' +
         '  end)\n' +
+        reportLua('un-fullscreen') + '\n' +
         restoreFocusLua('prevW', 'cur') + '\n' +
+        'end'
+    ).replace(/\n\s*/g, ' ')
+}
+
+// One atomic chunk that moves the floating window `addr` to workspace `targetWs` (skipped when
+// it is already there) and then to the exact global position `pos` — in that order, because a
+// workspace transfer relocates a floating window (especially across monitors), so positioning
+// must come after it. Both happen inside the compositor before the next frame, so nothing in
+// the overlay has to survive to finish the move: an unloaded overlay loses only its optimistic
+// tile, never the operation. Tiled windows return early (they take the tiled-insert chunk).
+// The position payload keeps the exact-coordinate string form the old two-phase move used.
+function floatingMoveLua(addr, targetWs, pos) {
+    var ws = String(parseInt(targetWs, 10))
+    var x = Math.round(pos.x), y = Math.round(pos.y)
+    return (
+        'function()\n' +
+        '  local sel = "address:' + addr + '"\n' +
+        '  local w = hl.get_window(sel)\n' +
+        '  if not w or not w.floating then return end\n' +
+        '  local prevW, cur = hl.get_active_window(), hl.get_cursor_pos()\n' +
+        '  ' + dispatchGuardLua() + '\n' +
+        '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
+        '  local ok, err = pcall(function()\n' +
+        '    if not same then run(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
+        '    run(hl.dsp.window.move({ x = "' + x + '", y = "' + y + '", window = sel }))\n' +
+        '  end)\n' +
+        '  ' + reportLua('floating move') + '\n' +
+        '  ' + restoreFocusLua('prevW', 'cur') + '\n' +
         'end'
     ).replace(/\n\s*/g, ' ')
 }
@@ -457,6 +531,12 @@ function hitWorkspace(boxes, px, py) {
             return b.workspaceId
     }
     return null
+}
+
+// Index of the box showing workspace `id`, or -1.
+function indexOfWorkspace(boxes, id) {
+    for (var i = 0; i < boxes.length; i++) if (boxes[i].workspaceId === id) return i
+    return -1
 }
 
 function diffByAddress(prevAddresses, nextTiles) {

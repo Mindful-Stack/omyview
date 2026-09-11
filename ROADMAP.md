@@ -7,7 +7,9 @@ math + reconcile in a unit-tested `logic.js` (Tier 1 CI); Tier 2 nested-Hyprland
 Maintained as a standalone public repo (`Mindful-Stack/omyview`). See `DESIGN.md` (what/why),
 `docs/specs/` + `docs/plans/` (the v2 design + build), and `PLAN.md` (v1 build log). Window
 states (2026-09-10): fullscreen windows drawn in their recovered slot with an un-fullscreen
-badge; floating tiles stack above tiled.
+badge; floating tiles stack above tiled. Hardening (2026-09-10, review follow-up): atomic
+floating move, guarded chunk cleanup + error reporting, dwindle guard, event-flood-safe
+refresh, selection by workspace id, Lua behaviour suite in CI.
 
 ## Next steps
 
@@ -58,3 +60,16 @@ consumer-side install + SUPER+P bind.
   `se.mindfulstack.omyview/` — the folder is named after the manifest `id`, not the repo.
 - SUPER+P toggles open AND close even under the overlay's exclusive keyboard focus
   (Hyprland forwards configured keybinds over the layer); bare keys still reach the overlay.
+- **Every compositor operation is one atomic Lua chunk** (`logic.js`: `tiledInsertLua`,
+  `floatingMoveLua`, `unfullscreenLua`). The shell unloads the overlay on toggle-close
+  (`keepLoaded: false`), so nothing in `Overview.qml` may be required to *finish* an
+  operation — `pendingMoves` is optimistic display state only. Chunk failures are printed to
+  the Hyprland log (`[Lua] omyview: … failed: …`) and shown as a notification.
+- **`hl.dispatch` never raises** (0.56.2 `hlDispatch`): a failed dispatcher returns
+  `{ ok = false, error = … }`. Every chunk defines `run(d)` that raises on that inside its pcall;
+  dispatch a guarded step through `run(`, never bare `hl.dispatch(` (the shape test enforces it).
+- `tests/lua-check.sh` runs the generated chunks against a mock `hl` (`tests/lua/`); a new
+  dispatcher used by a chunk must be added to the mock, never stubbed as a no-op.
+- Coalesced refresh: an event while the settle timer runs *owes* a refresh on the next tick.
+  Never skip it — a request already in flight cannot contain the change the event announces
+  (the nested-compositor un-fullscreen case catches this).

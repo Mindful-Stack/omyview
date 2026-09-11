@@ -9,6 +9,7 @@ TestCase {
     property var view
     property var client
     Component { id: overview; Overview {} }
+    SignalSpy { id: boxesSpy; signalName: "boxesChanged" }   // rebuild() assigns root.boxes a fresh array each call
     function init() {
         view = createTemporaryObject(overview, tc)
         verify(view !== null)
@@ -91,23 +92,25 @@ TestCase {
         compare(tile().x,before)
         verify(view.pendingMoves[client.address] === undefined)
     }
-    function test_cross_workspace_waits_before_positioning() {
+    function test_cross_workspace_floating_move_is_one_dispatch() {
         client.floating = true; view.rebuild()
         dragBy(view.boxes[1].x-view.boxes[0].x,20)
-        compare(view.compositor.commands.length,1)
-        verify(view.compositor.commands[0].indexOf('workspace = 2') >= 0)
+        compare(view.compositor.commands.length,1,"transfer and positioning are one atomic chunk")
+        var cmd=view.compositor.commands[0]
+        verify(cmd.indexOf('workspace = "2"')>=0, "transfer to workspace 2")
+        verify(cmd.indexOf('x = "')>=0, "position is in the same chunk")
+        verify(cmd.indexOf('workspace = "2"') < cmd.indexOf('x = "'), "transfer before positioning")
         var dropped = tile().x
-        view.rebuild(); compare(tile().x,dropped)
+        view.rebuild(); compare(tile().x,dropped,"stale geometry must not undo the optimistic drop")
         var ws = view.compositor.workspaces.values
         ws[0].toplevels.values=[]
         ws[1].toplevels.values=[{lastIpcObject:client}]
         view.rebuild()
-        compare(view.compositor.commands.length,2)
-        verify(view.compositor.commands[1].indexOf('x = "') >= 0)
+        compare(view.compositor.commands.length,1,"no second phase once the transfer lands")
         compare(tile().x,dropped)
         var p=view.pendingMoves[client.address].pos
         client.at=[p.x,p.y]; view.rebuild()
-        verify(view.pendingMoves[client.address] === undefined)
+        verify(view.pendingMoves[client.address] === undefined, "acknowledged by geometry")
         compare(view.testModel.get(0).wsid,2)
     }
     function test_outside_drop_does_not_move_floating_window() {
@@ -160,7 +163,8 @@ TestCase {
         // The tile may already show workspace 2 while the real transfer is pending.
         view.testModel.setProperty(0,"wsid",2)
         view.submitDrop(client.address,2,b.x+30,b.y+30)
-        verify(view.compositor.commands[0].indexOf('workspace = 2') >= 0)
+        verify(view.compositor.commands[0].indexOf('workspace = "2", follow = false') >= 0,
+               "a transfer is dispatched because the real source is workspace 1")
     }
 
     function test_app_class_refreshes_existing_tile() {
@@ -649,4 +653,59 @@ TestCase {
         mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
     }
 
+    // Coalescing must never drop the refresh for an event that arrives after the last refresh
+    // was requested: that request cannot contain the change the new event announces.
+    function test_event_after_a_refresh_gets_its_own_refresh_within_a_tick() {
+        wait(400)                         // open()'s settle window has ended
+        view.compositor.refreshes = 0
+        view.compositor.rawEvent()        // leading edge: refresh at once
+        compare(view.compositor.refreshes, 1)
+        wait(10)
+        view.compositor.rawEvent()        // mid-stream: a second refresh is owed
+        wait(100)
+        compare(view.compositor.refreshes, 2, "the later event must trigger another refresh")
+    }
+    // Raw compositor events faster than the settle interval must not starve the rebuild, and
+    // must not fan out into one refresh request per event.
+    function test_event_flood_still_rebuilds_and_throttles_refresh() {
+        boxesSpy.target = view; boxesSpy.clear()
+        view.compositor.refreshes = 0
+        for (var i = 0; i < 20; i++) { view.compositor.rawEvent(); wait(25) }   // 500 ms stream
+        verify(boxesSpy.count >= 5, "rebuilt during the flood (got " + boxesSpy.count + ")")
+        verify(view.compositor.refreshes <= 10, "at most one refresh per settle tick (got " + view.compositor.refreshes + ")")
+        var after = boxesSpy.count
+        wait(400)
+        verify(boxesSpy.count > after, "settles after the stream ends")
+        var settled = boxesSpy.count
+        wait(400)
+        compare(boxesSpy.count, settled, "timer stops after five quiet ticks")
+    }
+    function threeWorkspaces() {
+        var mon = view.compositor.monitors.values[0]
+        view.compositor.workspaces = {values:[
+            {id:1,monitor:mon,toplevels:{values:[{lastIpcObject:client}]}},
+            {id:2,monitor:mon,toplevels:{values:[]}},
+            {id:3,monitor:mon,toplevels:{values:[]}}
+        ]}
+        view.rebuild()
+    }
+    // Selection is a workspace, not a position: when a preceding workspace disappears the
+    // selected id must survive the rebuild.
+    function test_selection_keeps_workspace_when_earlier_one_vanishes() {
+        threeWorkspaces()
+        view.selectByNav("right")
+        compare(view.selectedId, 2)
+        view.compositor.workspaces.values.splice(0, 1)   // workspace 1 destroyed
+        view.rebuild()
+        compare(view.selectedId, 2, "still workspace 2, not whatever now sits at index 1")
+    }
+    // When the selected workspace itself disappears, fall back to the nearest position.
+    function test_selection_falls_back_when_selected_workspace_vanishes() {
+        threeWorkspaces()
+        view.selectByNav("right"); view.selectByNav("right")
+        compare(view.selectedId, 3)
+        view.compositor.workspaces.values.splice(2, 1)   // workspace 3 destroyed
+        view.rebuild()
+        compare(view.selectedId, 2, "clamped to the last box")
+    }
 }

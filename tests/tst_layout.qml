@@ -392,8 +392,9 @@ TestCase {
         verify(lua.indexOf('== "bottom" then y = a.at.y + a.size.y') >= 0, "bottom edge of the anchor")
         verify(lua.indexOf('hl.get_cursor_pos()') >= 0)
         verify(lua.indexOf('NaN') < 0 && lua.indexOf('undefined') < 0)
-        var order = [lua.indexOf('window.float('), lua.indexOf('window.move('),
-                     lua.indexOf('hl.get_window(anchorSel)'), lua.indexOf('cursor.move('),
+        var firstFloat = lua.indexOf('window.float(')   // the layout-guard fallback move precedes it by design
+        var order = [firstFloat, lua.indexOf('window.move(', firstFloat),
+                     lua.indexOf('hl.get_window(anchorSel)'), lua.indexOf('cursor.move(', firstFloat),
                      lua.lastIndexOf('window.float(')]
         for (var i = 1; i < order.length; i++) verify(order[i] > order[i - 1], "step order " + i)
         verify(lua.lastIndexOf('smart_split = smart') > lua.lastIndexOf('window.float('), "config restored after re-tile")
@@ -428,9 +429,10 @@ TestCase {
     // A chunk that fails to parse is dropped silently by the compositor, so beyond substring
     // checks we sanity-check that every do/then/function( opener has a matching end.
     function luaBalanced(s) {
-        var open = (s.match(/\b(do|then|function\s*\()/g) || []).length
+        var open = (s.match(/\b(do|then|function)\b/g) || []).length   // anonymous or named functions
+        var elseifs = (s.match(/\belseif\b/g) || []).length   // `elseif … then` shares the if's end
         var close = (s.match(/\bend\b/g) || []).length
-        return open === close
+        return open - elseifs === close
     }
 
     // The un-fullscreen chunk re-reads the window and only acts when its mode differs from the
@@ -454,6 +456,91 @@ TestCase {
         var body = Logic.fullscreenBodyLua('fsSel', 'fsMode')
         verify(body.indexOf('hl.get_window(fsSel), fsMode') >= 0, "selector and mode may be Lua expressions")
         verify(body.indexOf('"maximized" or "fullscreen"') >= 0, "mode name derived from target/current mode")
+    }
+
+    // A floating drop is ONE chunk: (workspace transfer, skipped when already there) then the
+    // exact-position move, in that order, inside the compositor — so nothing depends on the
+    // overlay staying loaded to finish the job. Focus/cursor restore as in every other chunk.
+    function test_floating_move_lua_transfers_then_positions_in_one_chunk() {
+        var lua = Logic.floatingMoveLua("0xabc", 3, { x: 200.4, y: 1600.6 })
+        verify(lua.indexOf('\n') < 0, "single line")
+        verify(lua.indexOf('function()') === 0)
+        verify(lua.indexOf('local sel = "address:0xabc"') >= 0)
+        verify(lua.indexOf('if not w or not w.floating then return end') >= 0, "tiled windows are not moved by this chunk")
+        var xfer = lua.indexOf('workspace = "3", follow = false'), pos = lua.indexOf('x = "200", y = "1601"')
+        verify(xfer >= 0, "workspace transfer present"); verify(pos >= 0, "rounded exact position present")
+        verify(xfer < pos, "transfer before positioning")
+        verify(lua.indexOf('w.workspace.id == 3') >= 0, "transfer is skipped when already on the workspace")
+        verify(lua.indexOf('pcall(function()') >= 0 && luaBalanced(lua), "guarded and balanced")
+        verify(lua.lastIndexOf('hl.dsp.focus(') > pos && lua.lastIndexOf('cursor.move(') > lua.lastIndexOf('hl.dsp.focus('),
+               "focus then cursor restored after the moves")
+        verify(lua.indexOf('NaN') < 0 && lua.indexOf('undefined') < 0)
+    }
+
+    // Cleanup must not be skippable: the un-float, both fullscreen re-applies and the config
+    // restore each run OUTSIDE the risky pcall and re-read state so they only undo what the
+    // chunk did. A swallowed error is reported (compositor log + on-screen notification).
+    function test_tiled_insert_lua_cleanup_is_outside_the_risky_pcall_and_reports() {
+        var lua = Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 })
+        var risky = lua.lastIndexOf('local ok, err = pcall(function()')   // the layout guard has its own, earlier
+        verify(risky >= 0, "risky steps capture ok/err")
+        var riskyEnd = lua.indexOf('end)', lua.indexOf('cursor.move(', risky))
+        verify(riskyEnd > risky, "the cursor move is the last risky step")
+        var unfloat = lua.indexOf('if fw and fw.floating then run(hl.dsp.window.float(')
+        verify(unfloat > riskyEnd, "un-float re-reads floating state and runs after the pcall")
+        verify(lua.indexOf('local function step(f) local g, e = pcall(f) if not g then ok, err = false, err or e end end') > riskyEnd,
+               "cleanup steps are guarded and fold their failure into ok/err")
+        verify(lua.indexOf('step(function() if fsSel and fsSel ~= sel then') > riskyEnd, "workspace fullscreen re-apply is its own guarded step")
+        verify(lua.indexOf('step(function() if ownMode ~= 0 then') > riskyEnd, "own fullscreen re-apply is its own guarded step")
+        verify(lua.lastIndexOf('smart_split = smart') > lua.lastIndexOf('step(function() if ownMode'), "config restored after every guarded cleanup step")
+        verify(lua.lastIndexOf('if not ok then') > lua.lastIndexOf('smart_split = smart'), "report after the config restore")
+        verify(lua.indexOf('print(msg)') >= 0 && lua.indexOf('hl.notification.create({ text = msg') >= 0, "reported to log and screen")
+        verify(lua.indexOf('tiled insert failed') >= 0)
+        verify(luaBalanced(lua))
+    }
+    // Non-dwindle layouts get a plain silent workspace move (or nothing, same workspace) —
+    // the cursor-based insert is a dwindle behaviour.
+    function test_tiled_insert_lua_falls_back_to_plain_move_off_dwindle() {
+        var lua = Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 })
+        var guard = lua.indexOf('local layout = hl.get_config("general.layout")')
+        verify(guard >= 0 && guard < lua.indexOf('smart_split = true'), "layout read before any dwindle config change")
+        verify(lua.indexOf('if layout ~= nil and layout ~= "dwindle" then') >= 0, "unknown key (nil) keeps the dwindle path")
+        var fb = lua.indexOf('if not same then run(hl.dsp.window.move({ workspace = "3", follow = false, window = sel })) end', guard)
+        verify(fb > guard && fb < lua.indexOf('smart_split = true'), "fallback is a plain silent move, before the dwindle path")
+        verify(lua.lastIndexOf('local ok, err = pcall(function()', fb) > guard && lua.indexOf('if not ok then', fb) < lua.indexOf('smart_split = true'),
+               "the fallback move is guarded and reported too")
+        verify(lua.indexOf('return', fb) > fb && lua.indexOf('return', fb) < lua.indexOf('smart_split = true'), "fallback returns before the dwindle path")
+    }
+    function test_index_of_workspace() {
+        var boxes = [{ workspaceId: 2 }, { workspaceId: 5 }, { workspaceId: 7 }]
+        compare(Logic.indexOfWorkspace(boxes, 5), 1)
+        compare(Logic.indexOfWorkspace(boxes, 2), 0)
+        compare(Logic.indexOfWorkspace(boxes, 9), -1)
+        compare(Logic.indexOfWorkspace([], 2), -1)
+    }
+    // hl.dispatch never raises: a failed dispatcher returns { ok = false, error }. Every chunk
+    // defines run() to raise on that inside its pcall, and dispatches its steps through it.
+    function test_every_chunk_reports_swallowed_errors() {
+        var chunks = [Logic.unfullscreenLua("0xabc"), Logic.floatingMoveLua("0xabc", 2, { x: 1, y: 2 }),
+                      Logic.tiledInsertLua("0xabc", 3, { anchor: "0xdef", side: "left", x: 1, y: 2 })]
+        for (var i = 0; i < chunks.length; i++) {
+            var c = chunks[i], guard = c.indexOf('local function run(d) local r = hl.dispatch(d) if r and r.ok == false then error(tostring(r.error), 0) end return r end')
+            verify(guard >= 0 && guard < c.indexOf('pcall(function()'), "chunk " + i + " defines run() before its first pcall")
+            // Every `local ok, err = pcall(...)` … `if not ok then` span (risky steps + cleanup)
+            // dispatches through run(); only the best-effort focus/cursor restore stays raw.
+            var at = 0, spans = 0
+            while ((at = c.indexOf('local ok, err = pcall(function()', at)) >= 0) {
+                var body = c.substring(at, c.indexOf('if not ok then', at))
+                verify(body.indexOf('hl.dispatch(') < 0, "chunk " + i + " span " + spans + ": guarded steps dispatch through run()")
+                at += 10; spans++
+            }
+            verify(spans >= 1, "chunk " + i + " has a guarded span")
+        }
+        verify(chunks[0].indexOf('un-fullscreen failed') >= 0)
+        verify(chunks[1].indexOf('floating move failed') >= 0)
+        var r = Logic.reportLua('thing')
+        verify(r.indexOf('if not ok then') === 0 && r.indexOf('tostring(err)') >= 0)
+        verify(r.indexOf('pcall(function() hl.notification.create(') >= 0, "notification API itself guarded (older Hyprland)")
     }
 
     // ---- recoverSlot: a fullscreen window's tiled slot is what the OTHER tiled windows leave

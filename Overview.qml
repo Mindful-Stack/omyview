@@ -128,10 +128,6 @@ Item {
         interval: 120; repeat: true
         onTriggered: root._reconcileStep()
     }
-    function _movePosition(addr, pos) {
-        Hyprland.dispatch('hl.dsp.window.move({ x = "' + pos.x + '", y = "' + pos.y +
-                          '", window = "address:' + addr + '" })')
-    }
     function setTileRoles(addr, roles) {
         for (var i = 0; i < tilesModel.count; i++)
             if (tilesModel.get(i).address === addr) { tilesModel.set(i, roles); return }
@@ -233,9 +229,7 @@ Item {
         }
         var pos = win.floating ? Logic.dropToWindowPos(dropX, dropY, box, mon, params, win) : null
         if (targetWs === sourceWs && !pos) return // grouped tiled: snap back in place
-        var pending = { workspaceId: targetWs, pos: pos,
-                        positioning: targetWs === sourceWs,
-                        deadline: Date.now() + 1800 }
+        var pending = { workspaceId: targetWs, pos: pos, deadline: Date.now() + 1800 }
         pendingMoves[addr] = pending
         // Publish the destination before restoring x/y bindings. Keep it until the
         // compositor acknowledges this move; refreshToplevels is asynchronous.
@@ -251,10 +245,11 @@ Item {
                                 wh: rect ? rect.h : tilesModel.get(i).wh, wsid: targetWs })
             break
         }
-        if (targetWs !== sourceWs) {
-            Hyprland.dispatch('hl.dsp.window.move({ workspace = ' + targetWs +
-                              ', follow = false, window = "address:' + addr + '" })')
-        } else _movePosition(addr, pos)
+        // Floating: transfer + exact position in one compositor-side chunk (nothing here has to
+        // outlive the overlay to finish it). Grouped tiled windows only change workspace.
+        if (pos) Hyprland.dispatch(Logic.floatingMoveLua(addr, targetWs, pos))
+        else Hyprland.dispatch('hl.dsp.window.move({ workspace = ' + targetWs +
+                               ', follow = false, window = "address:' + addr + '" })')
         scheduleRebuild()
         reconcileTimer.restart()
     }
@@ -285,13 +280,6 @@ Item {
                                   // a vanished anchor acknowledges: the insert is moot
                 if (ownSame && anchorSame) continue
                 delete pendingMoves[addr]
-                continue
-            }
-            if (pending.pos && !pending.positioning) {
-                // Wait for workspace transfer before positioning: transfer itself can
-                // relocate a floating window, especially across different monitors.
-                pending.positioning = true
-                _movePosition(addr, pending.pos)
                 continue
             }
             if (!pending.pos || (Math.abs(win.ax - pending.pos.x) <= 1 &&
@@ -384,6 +372,7 @@ Item {
     }
 
     function rebuild() {
+        var keepId = root.selectedId   // the workspace the user has selected, before layout
         buildHandles()
         var input = buildInput()
         var cmap = {}, tmap = {}, fmap = {}, wmap = {}
@@ -410,14 +399,16 @@ Item {
         canvas.implicitWidth = res.canvasSize.w
         canvas.implicitHeight = res.canvasSize.h
         applyTiles(res.tiles)
-        if (root.selectedIndex < 0) {
-            var fi = -1
-            for (var b = 0; b < res.boxes.length; b++) if (res.boxes[b].focused) { fi = b; break }
-            root.selectedIndex = fi >= 0 ? fi : (res.boxes.length ? 0 : -1)
-        } else {
-            root.selectedIndex = res.boxes.length
-                ? Math.min(Math.max(root.selectedIndex, 0), res.boxes.length - 1) : -1
+        // Selection follows the workspace, not its position: workspaces come and go while the
+        // overview is open (a drag can empty and destroy one), shifting every later box.
+        var idx = keepId >= 0 ? Logic.indexOfWorkspace(res.boxes, keepId) : -1
+        if (idx < 0 && root.selectedIndex >= 0)   // selected workspace vanished: nearest position
+            idx = res.boxes.length ? Math.min(root.selectedIndex, res.boxes.length - 1) : -1
+        if (idx < 0 && res.boxes.length) {        // nothing selected yet: the focused workspace
+            for (var b = 0; b < res.boxes.length; b++) if (res.boxes[b].focused) { idx = b; break }
+            if (idx < 0) idx = 0
         }
+        root.selectedIndex = idx
     }
 
     function selectByNav(dir) {
@@ -450,30 +441,40 @@ Item {
     }
     function close() {
         endDrag()
-        // A dispatched workspace move still needs its positioning/ack phase when closed.
+        // Every dispatched operation is atomic in the compositor; the reconcile timer only
+        // clears optimistic state.
         settleTimer.stop()
         opened = false
     }
     function toggle() { if (opened) close(); else open() }
 
-    // Ask Hyprland for fresh client data, then rebuild a few times over ~300ms so a window
-    // opened while the overview is visible appears once its async geometry arrives — a single
-    // rebuild here would read stale/empty `lastIpcObject` geometry. Bursts of events coalesce
-    // into one settle window (the tick counter resets on each schedule).
-    function scheduleRebuild() {
+    // Ask Hyprland for fresh client data, then rebuild every 60ms until five quiet ticks have
+    // passed, so a window opened while the overview is visible appears once its async geometry
+    // arrives — a single immediate rebuild would read stale/empty `lastIpcObject` geometry.
+    // The first event of a burst refreshes at once (the data has a tick to land); events while
+    // the timer runs extend the settle window and owe one refresh, paid on the next tick — so
+    // every event is followed by a refresh, a stream faster than the interval still rebuilds
+    // every tick, and there is at most one refresh per tick instead of one per event.
+    function requestRefresh() {
         if (typeof Hyprland.refreshToplevels === "function") Hyprland.refreshToplevels()
         if (typeof Hyprland.refreshWorkspaces === "function") Hyprland.refreshWorkspaces()
+    }
+    function scheduleRebuild() {
         settleTimer.ticks = 0
-        settleTimer.restart()
+        if (settleTimer.running) settleTimer.refreshOwed = true
+        else { requestRefresh(); settleTimer.start() }
     }
     Timer {
         id: settleTimer
         interval: 60; repeat: true
         property int ticks: 0
+        property bool refreshOwed: false   // an event arrived after the last refresh request
         onTriggered: {
+            if (refreshOwed) { refreshOwed = false; root.requestRefresh() }
             if (root.opened) root.rebuild()
             if (++ticks >= 5) stop()
         }
+        onRunningChanged: if (!running) refreshOwed = false
     }
     ListModel { id: tilesModel }
 
