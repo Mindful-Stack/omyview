@@ -72,7 +72,9 @@ excluded), in layout order. Output: an array of `{ address, score }`, best first
 empty query.
 
 - **Subsequence match**, case-insensitive: every query character must occur in order in the
-  haystack. A window matches if either its class or its title matches.
+  haystack. A window matches if either its class or its title matches. The score is that of the
+  **best alignment**, not the first: for `ab`, "xax ab" scores its whole-word `ab`, not the
+  isolated `a` at index 1 followed by a distant `b`.
 - **Score** (higher is better) = best of the class score and the title score, where each is the
   sum of per-character bonuses: consecutive with the previous match, at the start of the haystack,
   or at the start of a word (after space, `-`, `_`, `.`, `/`, `:`); minus a small length penalty
@@ -89,8 +91,10 @@ empty query.
   Non-matching tiles fade to 0.35 opacity. Both changes animate with `motion.fast` / `motion.hover`
   and are instant with motion off.
 - **Find bar.** The hint `Row` at the bottom of the card is replaced (same anchors, same height
-  budget) by a `FindBar` item: a search glyph, the query text, and `n of m` right-aligned
-  (`n` = selected rank 1-based, `m` = match count). With the query empty the hint row returns,
+  budget) by a `FindBar` item spanning the card interior: a search glyph at the left, `n of m`
+  anchored at the right (`n` = selected rank 1-based, `m` = match count), and the query text
+  filling the space between, eliding at its *start* so the newest characters stay visible. A
+  long query never widens the bar or pushes the count out of the card. With the query empty the hint row returns,
   carrying one new hint `type · find`. If `config.hint` is off, the card reserves no hint space
   normally but grows by the bar height while a query is active — the bar is the only place the
   query is visible, so it is never suppressed.
