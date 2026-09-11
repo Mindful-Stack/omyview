@@ -6,6 +6,6 @@
   "author": "Mindful Stack",
   "description": "Live-preview overview of all workspaces, grouped by monitor, with drag-and-drop",
   "kinds": ["overlay"],
-  "keepLoaded": false,
+  "keepLoaded": true,
   "entryPoints": { "overlay": "Overview.qml" }
 }

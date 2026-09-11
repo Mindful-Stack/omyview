@@ -24,9 +24,17 @@ Item {
     property bool fullscreenPending: false   // un-fullscreen dispatched; badge hidden until confirmed
     signal unfullscreenRequested()
 
+    // Motion vocabulary handed down by Overview: durations (ms) and easings. Tiles never own
+    // a duration of their own.
+    required property QtObject motion
+
     property bool dropTarget: false
     // "left"|"right"|"top"|"bottom": which half a dragged tiled window would take here
     property string dropSide: ""
+    // The last non-empty side: the insertion half keeps it while fading out, so it never
+    // jumps to another edge on the way to transparent.
+    property string shownSide: ""
+    onDropSideChanged: if (dropSide.length) shownSide = dropSide
 
     readonly property bool wantCapture: handle !== null && capMode !== "icon"
     readonly property string iconUrl: Quickshell.iconPath(String(cls).toLowerCase(), true)
@@ -40,31 +48,64 @@ Item {
     readonly property real dragOpacity: 0.6
     readonly property alias ghostScale: ghost.xScale
 
-    // Record a new grab point. If the release animation is still running (scale ≠ 1), moving
-    // the Scale origin would displace the rendered tile by (grab − oldOrigin)·(1 − scale) —
-    // a re-grab during those 100ms would jump. Offset x/y by exactly that amount so the grabbed
-    // point stays where the pointer pressed; the drag takes over x/y from here and Overview
-    // rebinds them on release.
+    // Record a new grab point and take ownership of x/y. If the release animation is still
+    // running (scale ≠ 1), moving the Scale origin would displace the rendered tile by
+    // (grab − oldOrigin)·(1 − scale) — a re-grab during those 90 ms would jump — so offset
+    // x/y by exactly that amount. The assignments are unconditional on purpose: a plain JS
+    // write detaches x/y from their bindings (MouseArea's drag writes from C++ and leaves the
+    // bindings in place, so a glide target changing mid-drag would otherwise re-assert them).
+    // Overview rebinds x/y on release.
     function beginGrab(gx, gy) {
         var s = ghost.xScale
-        if (s !== 1) { x -= (gx - grabX) * (1 - s); y -= (gy - grabY) * (1 - s) }
+        var dx = s !== 1 ? (gx - grabX) * (1 - s) : 0
+        var dy = s !== 1 ? (gy - grabY) * (1 - s) : 0
+        x = x - dx; y = y - dy
         grabX = gx; grabY = gy
     }
 
     HoverHandler { id: hh; enabled: !tile.dragging }
-    scale: dragging ? 1 : (hh.hovered ? 1.03 : 1)
+    // Appear (window opened while the picker is showing): fade + scale 0.9 → 1 from the
+    // centre, on channels of their own so the hover/lift Behaviors are not re-smoothing an
+    // already smooth ramp (they are disabled while it runs). Both NumberAnimations carry an
+    // explicit `from`, so Qt writes that starting value straight to appearScale/appearOpacity
+    // when the animation starts — no manual priming of those two properties needed, and no
+    // ordering trick with appearAnim.running to get a deterministic first value out of them.
+    // But Qt sets that `from` value *before* flipping the animation's own `running` to true,
+    // so at that exact instant the hover/lift Behaviors below (gated on !appearAnim.running)
+    // are still enabled and would catch the resulting scale/opacity write and smooth it into
+    // their own transition instead of letting it land — `priming` closes that one-tick gap.
+    property real appearScale: 1
+    property real appearOpacity: 1
+    property bool priming: false
+    function appear() {
+        if (!tile.motion.enabled) return
+        priming = true
+        appearAnim.restart()
+        priming = false
+    }
+    ParallelAnimation {
+        id: appearAnim
+        NumberAnimation { target: tile; property: "appearScale"; from: 0.9; to: 1
+                          duration: tile.motion.normal; easing.type: tile.motion.move }
+        NumberAnimation { target: tile; property: "appearOpacity"; from: 0; to: 1
+                          duration: tile.motion.normal; easing.type: tile.motion.move }
+    }
+    scale: (dragging ? 1 : (hh.hovered ? 1.03 : 1)) * appearScale
     transformOrigin: Item.Center
     // Hover raises a tile within its own layer only; dragging is the single global exception.
     z: dragging ? 99999 : tileLayer * 10 + (hh.hovered ? 1 : 0)
-    opacity: dragging ? dragOpacity : 1
-    Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
-    Behavior on opacity { NumberAnimation { duration: 100 } }
+    opacity: (dragging ? dragOpacity : 1) * appearOpacity
+    Behavior on scale { enabled: tile.motion.enabled && !appearAnim.running && !priming
+        NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
+    Behavior on opacity { enabled: tile.motion.enabled && !appearAnim.running && !priming
+        NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
     transform: Scale {
         id: ghost
         origin.x: tile.grabX; origin.y: tile.grabY
         xScale: tile.dragging ? tile.dragScale : 1
         yScale: xScale
-        Behavior on xScale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
+        Behavior on xScale { enabled: tile.motion.enabled
+            NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
     }
 
     // Floating windows sit above the tiled ones on the real desktop; a soft shadow says so
@@ -123,7 +164,8 @@ Item {
         color: Qt.rgba(0, 0, 0, 0.55)
         visible: hh.hovered && lbl.text.length > 0
         opacity: hh.hovered ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 100 } }
+        Behavior on opacity { enabled: tile.motion.enabled
+            NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
         Text {
             id: lbl; anchors.centerIn: parent; color: "#fff"
             font.family: tile.fontFamily; font.pixelSize: tile.titleSize
@@ -133,16 +175,20 @@ Item {
         }
     }
 
-    // insertion preview: the half of this tile the dragged tiled window will be split into
+    // insertion preview: the half of this tile the dragged tiled window will be split into.
+    // Fades in/out (motion.fast); geometry follows tile.shownSide, not dropSide.
     Rectangle {
-        visible: tile.dropSide.length > 0
+        objectName: "insertHalf"
+        visible: opacity > 0
+        opacity: tile.dropSide.length > 0 ? 0.45 : 0
+        Behavior on opacity { enabled: tile.motion.enabled
+            NumberAnimation { duration: tile.motion.fast; easing.type: tile.motion.hover } }
         color: tile.borderColor
-        opacity: 0.45
         radius: 4
-        x: tile.dropSide === "right" ? parent.width / 2 : 0
-        y: tile.dropSide === "bottom" ? parent.height / 2 : 0
-        width: (tile.dropSide === "left" || tile.dropSide === "right") ? parent.width / 2 : parent.width
-        height: (tile.dropSide === "top" || tile.dropSide === "bottom") ? parent.height / 2 : parent.height
+        x: tile.shownSide === "right" ? parent.width / 2 : 0
+        y: tile.shownSide === "bottom" ? parent.height / 2 : 0
+        width: (tile.shownSide === "left" || tile.shownSide === "right") ? parent.width / 2 : parent.width
+        height: (tile.shownSide === "top" || tile.shownSide === "bottom") ? parent.height / 2 : parent.height
     }
 
     // fullscreen badge: a drawn four-corner glyph in the top-right corner while the window is

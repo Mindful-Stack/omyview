@@ -2,6 +2,7 @@
 MouseArea events, ListModel, bindings, timers and reconciliation run unchanged in Qt.
 """
 from pathlib import Path
+import json
 import re
 import sys
 source, dest = map(Path, sys.argv[1:])
@@ -15,13 +16,19 @@ qml = re.sub(r'Style\.space\((\d+)\)', r'\1', qml)
 qml = qml.replace('Hyprland.', 'compositor.').replace('target: Hyprland', 'target: compositor')
 qml = qml.replace('Quickshell.screens', '[]').replace('ToplevelManager.toplevels', 'null')
 qml = qml.replace('PanelWindow {', 'Item {')
-qml = re.sub(r'^\s*(screen: root.targetScreen|WlrLayershell\..*|exclusionMode:.*|color: "transparent")\n', '\n', qml, flags=re.M)
+qml = re.sub(r'^\s*(screen: root.targetScreen|WlrLayershell\..*|exclusionMode:.*|color: "transparent"|mask: .*|Region \{ id: emptyRegion \})\n', '\n', qml, flags=re.M)
 qml = qml.replace('anchors { top: true; bottom: true; left: true; right: true }', 'width: 1200; height: 800')
 qml = qml.replace('id: root', '''id: root
     property alias testModel: tilesModel
     property alias testFlick: flick
     property alias testCanvas: canvas
     property alias testDropWash: dropWash
+    property alias testFrame: selectionFrame
+    property alias testPanel: panel
+    property alias testCard: card
+    property alias testScrim: scrimRect
+    property alias testConfig: config
+    property alias testEnterAnim: enterAnim
     property QtObject compositor: QtObject {
         property var monitors: ({values: []})
         property var workspaces: ({values: []})
@@ -47,8 +54,19 @@ tile = tile[:start] + '    Rectangle { anchors.fill: parent; color: tile.bg }\n\
 (dest / 'WindowTile.qml').write_text(tile)
 (dest / 'logic.js').write_text((source / 'logic.js').read_text())
 # Shell-only helpers: the config loader needs Quickshell.Io, the shadow a GPU shader.
+# `motionEffective` is writable here so tests can flip the policy without a compositor.
 (dest / 'OmyviewConfig.qml').write_text(
-    'import QtQuick\nQtObject { property bool scrim: true; property bool hint: true }\n')
+    'import QtQuick\nQtObject { property bool scrim: true; property bool hint: true\n'
+    '           property string motion: "auto"; property string motionEffective: "full"\n'
+    '           property bool motionResolved: true\n'
+    '           function probeMotion() {} }\n')
+# Emulates shell.qml's manifest-driven Loader.active (shell.qml:623-626): a standalone fixture
+# file so the shell-like Loader in tst_drag.qml can read keepLoaded without a circular reference
+# through the Overview instance it is itself loading.
+keep_loaded = json.loads((source / 'manifest.json').read_text()).get('keepLoaded') is True
+(dest / 'Manifest.qml').write_text(
+    'import QtQuick\nQtObject { readonly property bool keepLoaded: %s }\n'
+    % ('true' if keep_loaded else 'false'))
 (dest / 'SoftShadow.qml').write_text(
     'import QtQuick\nItem { property Item target: parent; property real radius: 0; property real blur: 0\n'
     '       property var offset: null; property color color: "black" }\n')

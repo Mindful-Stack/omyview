@@ -279,3 +279,31 @@ Spec: `docs/specs/2026-09-10-window-states-design.md`; plan: `docs/plans/2026-09
   target) — checked against wall-clock acknowledgement bounds, not tick counts, since every poll
   is its own IPC round trip. The rig pins `dwindle:preserve_split = true` so split axes stay
   deterministic across the run.
+
+## Motion (2026-09-10)
+
+One vocabulary: a `motion` block on the Overview root owns every duration (fast 90 ms, normal
+160 ms, enter 200 ms, exit 120 ms) and easing (`OutCubic` for movement, `OutQuad` for hover and
+lift, a small-overshoot `OutBack` entrance); tiles receive it as a property. Policy: config
+`motion` is `"auto"` (follow Hyprland `animations:enabled`, probed with `hyprctl -j getoption`
+once per open, cached in `OmyviewConfig.hyprAnimations` and folded into the derived
+`motionEffective`), `"full"` or `"off"` (every duration 0, every Behavior disabled). Open/close
+are explicit animations; the `PanelWindow` stays mapped while `card.opacity > 0` and drops
+keyboard focus the moment `opened` clears. Layout motion is `Behavior`s on tile, box, badge and
+card geometry, gated on `root.layoutMotion` (motion on, the picker open, the entrance not
+running, and the 300 ms open-settle window elapsed — so the first layout and the settle
+rebuilds place rather than glide, including a rebuild fired while the surface is still
+mapping, and reconcile rebuilds after close start no glide that could finish under the next
+entrance). A tile's glide
+runs on `targetX`/`targetY`, not on `x`/`y`: the grab detaches `x`/`y` with a plain write
+(`beginGrab`) and the drag owns them, so a glide still in flight can never fight the pointer;
+release parks the targets at the drop point and rebinds them to the model, which is the settle.
+Boxes are a reconciled `ListModel`
+(`applyBoxes`, keyed by workspace id) for the same reason tiles are: recreated delegates cannot
+glide. `applyTiles`/`applyBoxes` compare a row before `set`, so an identical rebuild emits
+nothing. Drop wash and insertion half fade in/out on `motion.fast` and keep their last
+geometry while fading out; a window opened while the picker shows fades and scales its tile
+in (`WindowTile.appear`, skipped during the entrance and the open settle); a closed window's
+tile vanishes at once.
+Give the layer a `no_anim` rule so the compositor does not fade it a second time (README).
+Design: `docs/specs/2026-09-10-motion-design.md`.

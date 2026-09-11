@@ -26,8 +26,9 @@ removed `walker`.
   `Enter`, click a window to focus it, middle-click to close it. `Esc` or a click outside closes.
 - **Theme-aware.** Pulls the active Omarchy theme's colors and fonts, so it matches the bar
   and re-themes automatically.
-- **Zero idle cost.** It's an on-demand overlay — nothing (including captures) runs until you
-  summon it.
+- **Zero idle cost.** The component stays loaded with the shell so open and close can animate,
+  but nothing runs until you summon it: captures start when the surface is mapped and stop when
+  it hides (only the config-file watcher and one `hyprctl` probe at startup run before that).
 
 ---
 
@@ -135,12 +136,15 @@ Optional user settings live in `~/.config/omarchy/omyview.json` (watched; edits 
 ```json
 {
   "scrim": true,
-  "hint": true
+  "hint": true,
+  "motion": "auto"
 }
 ```
 
 - `scrim` — dim the desktop behind the picker while it is open (default `true`).
 - `hint` — show the key hints under the workspace grid (default `true`).
+- `motion` — `"auto"` (default) animates only when Hyprland's `animations:enabled` is on;
+  `"full"` always animates; `"off"` never does (every duration is 0).
 
 ### Blurred scrim (optional, Hyprland side)
 
@@ -167,6 +171,26 @@ the picker re-themes with everything else. Layout constants live in the `params`
 the top of `Overview.qml` (cell size caps, `cellInset`, `cellSpacing`, `rowSpacing`, the
 `minTileW`/`minTileH` clamps). After editing QML, run `omarchy restart shell` (see the note in
 Contributing about why a plain rescan isn't enough).
+
+### Let the picker animate itself (Hyprland side)
+
+Omyview animates its own open and close (a short fade and scale). Hyprland also animates
+layer surfaces by default, so without a rule the two stack: a compositor fade on top of the
+picker's own. Omarchy gives its shell overlays a `no_anim` rule; give `omyview` the same.
+Lua config (`~/.config/hypr/looknfeel.lua` or any file loaded by `hyprland.lua`):
+
+```lua
+hl.layer_rule({ match = { namespace = "omyview" }, no_anim = true, animation = "none" })
+```
+
+Classic config:
+
+```ini
+layerrule = noanim, omyview
+```
+
+With `"motion": "off"` (or `"auto"` while Hyprland's `animations:enabled` is off) the picker
+does not animate at all, and you may prefer to leave the compositor's layer animation on.
 
 ---
 

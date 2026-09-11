@@ -9,23 +9,39 @@ TestCase {
     property var view
     property var client
     Component { id: overview; Overview {} }
+    // Emulates the shell's per-plugin panel Loader (shell.qml:623-626): active while the
+    // manifest says keepLoaded, or while the shell has this id in openPanelIds (`open` here).
+    Component { id: shellLikeLoader
+        Loader {
+            property bool open: false
+            Manifest { id: manifest }
+            active: manifest.keepLoaded || open
+            sourceComponent: overview
+        }
+    }
     SignalSpy { id: boxesSpy; signalName: "boxesChanged" }   // rebuild() assigns root.boxes a fresh array each call
-    function init() {
-        view = createTemporaryObject(overview, tc)
-        verify(view !== null)
+    // Compositor fixture shared by init() and any test that drives its own Overview instance
+    // (e.g. through shellLikeLoader) instead of the `view` init() creates.
+    function seed(v) {
         var mon = {name:"TEST", x:0, y:1440, width:1920, height:1080,
                    scale:1, lastIpcObject:{reserved:[0,26,0,0],transform:0}}
         client = {address:"0x123", at:[100,1540], size:[600,400], floating:false,
                   title:"Test", "class":"test", fullscreen:0}
-        view.compositor.monitors = {values:[mon]}
-        view.compositor.focusedMonitor = mon
-        view.compositor.focusedWorkspace = {id:1}
-        view.compositor.workspaces = {values:[
+        v.compositor.monitors = {values:[mon]}
+        v.compositor.focusedMonitor = mon
+        v.compositor.focusedWorkspace = {id:1}
+        v.compositor.workspaces = {values:[
             {id:1,monitor:mon,toplevels:{values:[{lastIpcObject:client}]}},
             {id:2,monitor:mon,toplevels:{values:[]}}
         ]}
+    }
+    function init() {
+        view = createTemporaryObject(overview, tc)
+        verify(view !== null)
+        view.motion.scale = 0     // instant by default; timing tests set it to 1 themselves
+        seed(view)
         view.open()
-        wait(350)
+        wait(400)      // past the 200 ms entrance and the 300 ms open-settle window, with slack
     }
     function cleanup() { view.close() }
     function tileOf(addr) {
@@ -269,6 +285,7 @@ TestCase {
         compare(tile().x,before)
     }
     function test_ghost_shrinks_and_fades_while_dragging_and_restores() {
+        view.motion.scale = 1
         var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
         mousePress(tc,p.x,p.y,Qt.LeftButton)
         mouseMove(tc,p.x+12,p.y+2,20)
@@ -299,10 +316,11 @@ TestCase {
         view.close()
         mouseRelease(tc,goal.x,goal.y,Qt.LeftButton)
     }
-    // Re-grabbing while the 100ms release animation is still running must not shift the tile:
+    // Re-grabbing while the release animation (motion.fast, 90 ms) is still running must not shift the tile:
     // the Scale origin moves to the new grab point while the scale is still on its way back
     // to 1, which would displace the rendered tile by (grab − oldOrigin)·(1 − scale).
     function test_regrab_during_release_animation_keeps_grab_point_under_pointer() {
+        view.motion.scale = 1
         var t=tile(), g=t.mapToItem(tc,t.width-4,4)   // first grab: right edge
         mousePress(tc,g.x,g.y,Qt.LeftButton)
         mouseMove(tc,g.x+12,g.y+2,20)
@@ -415,7 +433,7 @@ TestCase {
         compare(badges.length, view.boxes.length, "one badge per workspace box")
         var t=tile()
         for (var i=0;i<badges.length;i++) {
-            var b=view.boxes[i]
+            var b=view.boxForWs(badges[i].model.workspaceId)
             verify(badges[i].visible)
             verify(badges[i].x >= b.x && badges[i].y >= b.y, "badge sits inside its box")
             verify(badges[i].z > t.z, "badge stacks above a resting tile")
@@ -707,5 +725,391 @@ TestCase {
         view.compositor.workspaces.values.splice(2, 1)   // workspace 3 destroyed
         view.rebuild()
         compare(view.selectedId, 2, "clamped to the last box")
+    }
+
+    // ---- motion vocabulary ----
+
+    // `off` zeroes every duration and disables every Behavior: selection snaps, and the
+    // window hides the instant it closes (no exit fade to wait for).
+    function test_motion_off_zeroes_every_duration_and_skips_animation() {
+        view.motion.scale = 1
+        view.testConfig.motionEffective = "off"
+        compare(view.motion.fast, 0); compare(view.motion.normal, 0)
+        compare(view.motion.enter, 0); compare(view.motion.exit, 0)
+        verify(!view.motion.enabled)
+        view.selectByNav("right")
+        compare(view.testFrame.x, view.boxes[1].x, "selection snaps")
+        view.close()
+        verify(!view.testPanel.visible, "hidden at once")
+    }
+    // With motion on, the keyboard selection frame glides: half-way through motion.normal
+    // it is strictly between the two boxes, and it lands exactly.
+    function test_selection_frame_glides_between_boxes() {
+        view.motion.scale = 1
+        var f = view.testFrame, b0 = view.boxes[0], b1 = view.boxes[1]
+        compare(f.x, b0.x)
+        view.selectByNav("right")
+        wait(80)
+        verify(f.x > b0.x + 1 && f.x < b1.x - 1, "half-way: between the boxes, x=" + f.x)
+        wait(200)
+        compare(f.x, b1.x)
+    }
+    // The frame dims while a drag is in progress, via motion.fast (instant here: scale 0).
+    function test_selection_frame_recedes_during_drag() {
+        var t=tile(), p=t.mapToItem(tc,t.width/2,t.height/2)
+        compare(view.testFrame.opacity, 1)
+        mousePress(tc,p.x,p.y,Qt.LeftButton)
+        mouseMove(tc,p.x+12,p.y+2,20)
+        mouseMove(tc,p.x+30,p.y+10,20)
+        fuzzyCompare(view.testFrame.opacity, 0.4, 0.01)
+        view.close()
+        mouseRelease(tc,p.x+30,p.y+10,Qt.LeftButton)
+    }
+
+    // ---- open / close ----
+
+    // Closing starts an exit fade: the surface stays mapped (opened=false, still visible)
+    // until the card's opacity reaches 0, then hides.
+    function test_window_stays_visible_through_the_exit_fade() {
+        view.motion.scale = 1
+        view.close()
+        verify(!view.opened)
+        verify(view.testPanel.visible, "still mapped while the card fades")
+        verify(view.testCard.opacity > 0 && view.testCard.opacity <= 1)
+        wait(250)
+        verify(!view.testPanel.visible, "hidden once the fade ends")
+        compare(view.testCard.opacity, 0)
+        compare(view.testScrim.opacity, 0)
+    }
+    // Opening animates in: the card is not yet opaque right after open() and is after the
+    // entrance; the scrim follows.
+    function test_open_fades_and_scales_the_card_in() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.open()
+        verify(view.testCard.opacity < 1, "entrance in flight")
+        verify(view.testCard.scale < 1, "scales up from 0.96")
+        wait(350)
+        compare(view.testCard.opacity, 1); compare(view.testCard.scale, 1)
+        compare(view.testScrim.opacity, 1)
+    }
+    // The card's content must not vanish at the start of the fade: boxes, badges and tiles
+    // are still there while opened is already false.
+    function test_card_content_stays_through_the_exit_fade() {
+        view.motion.scale = 1
+        view.close()
+        compare(canvasItems("wsBadge").length, view.boxes.length, "badges still present")
+        compare(canvasItems("wsBox").length, view.boxes.length, "boxes still present")
+        verify(tile().visible)
+        wait(250)
+    }
+    // Pointer handlers must go dead the instant `opened` drops, not once the fade finishes:
+    // a click on a box during the exit must not dispatch a jump.
+    function test_clicks_during_the_exit_fade_are_ignored() {
+        view.motion.scale = 1
+        view.close()
+        var b = view.boxes[1]
+        var p = view.testCanvas.mapToItem(tc, b.x + b.w / 2, b.y + b.h / 2)
+        mouseClick(tc, p.x, p.y, Qt.LeftButton)
+        wait(250)
+        compare(view.compositor.commands.length, 0, "no jump dispatched during the exit fade")
+    }
+    // Finding 1 (PR #10 review): shell.hide() calls close() and only then drops the id from
+    // openPanelIds; the shell's own panel Loader stays active across that only if the manifest
+    // says keepLoaded (shell.qml:480-495, 623-626) — otherwise the component is destroyed the
+    // instant close() returns and the exit fade never gets to play.
+    // Goes red if manifest.json ever reverts to keepLoaded: false: the emulated Loader would
+    // then deactivate on `loader.open = false` and loader.item would go null before the fade.
+    function test_shell_toggle_close_keeps_the_component_alive_for_the_exit_fade() {
+        var loader = createTemporaryObject(shellLikeLoader, tc)
+        loader.open = true
+        tryVerify(function() { return loader.item !== null })
+        var item = loader.item
+        seed(item)
+        item.motion.scale = 1
+        item.open()
+        wait(350)
+        // Emulate shell.hide(): close() first, then the shell drops the id from openPanelIds.
+        item.close()
+        loader.open = false
+        verify(loader.item !== null && loader.status === Loader.Ready,
+               "component survives the shell's hide")
+        verify(item.testPanel.visible, "surface still mapped for the fade")
+        verify(item.testCard.opacity > 0)
+        wait(250)
+        verify(!item.testPanel.visible)
+        // Re-summon through the same path: shell sets openPanelIds[id] = true, then calls open().
+        loader.open = true
+        item.open()
+        verify(item.opened, "re-summon through the same path works")
+    }
+    // Finding 2 (PR #10 review): motionEffective can flip to "off" mid-entrance (a late
+    // Hyprland probe, or a config edit); the already-running enterAnim must not keep going.
+    // Red before change D: opacity sits around 0.5 at the 50ms mark instead of snapping to 1.
+    function test_late_probe_result_off_settles_the_entrance() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.open()
+        wait(30)
+        verify(view.testCard.opacity < 1, "precondition: entrance in flight")
+        view.testConfig.motionEffective = "off"
+        wait(20)
+        compare(view.testCard.opacity, 1)
+        compare(view.testCard.scale, 1)
+        compare(view.testScrim.opacity, 1)
+        verify(!view.testEnterAnim.running)
+        view.close()
+        verify(!view.testPanel.visible, "with motion off, close hides at once")
+    }
+    // Finding 2 (PR #10 review), motionResolved half: motion must not start on a guess. While
+    // the first Hyprland probe hasn't answered, open() places the card at its final values with
+    // no entrance; once the probe resolves, only the *next* transition animates — a late
+    // resolution does not retroactively start an entrance for the one already placed.
+    // Red before change C: the fixture's OmyviewConfig has no motionResolved (TypeError), or
+    // once the stub carries one but Overview.qml does not gate on it (opacity < 1 while
+    // unresolved).
+    function test_motion_waits_for_the_first_probe() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.testConfig.motionResolved = false
+        view.open()
+        compare(view.testCard.opacity, 1, "unresolved policy: placed, not animated")
+        verify(!view.testEnterAnim.running)
+        view.testConfig.motionResolved = true
+        wait(20)
+        compare(view.testCard.opacity, 1, "a late 'on' does not start a retroactive entrance")
+        view.close()
+        verify(view.testPanel.visible, "…but the next transition animates")
+        wait(250)
+        verify(!view.testPanel.visible)
+    }
+    // ---- boxes model ----
+    function boxItem(ws) {
+        var c = view.testCanvas.children
+        for (var i = 0; i < c.length; i++)
+            if (c[i].objectName === "wsBox" && c[i].model && c[i].model.workspaceId === ws) return c[i]
+        fail("box " + ws + " not found")
+    }
+    // Boxes are reconciled in place like tiles: an identical rebuild keeps the delegate
+    // instance, a new workspace adds one, a vanished workspace removes one and the survivors
+    // move into the freed column.
+    function test_box_delegates_are_reconciled_not_recreated() {
+        var b2 = boxItem(2)
+        view.rebuild()
+        compare(boxItem(2), b2, "identical rebuild keeps the instance")
+        var ws = view.compositor.workspaces.values
+        ws.push({id:3, monitor: ws[0].monitor, toplevels:{values:[]}}); view.rebuild()
+        compare(canvasItems("wsBox").length, 3)
+        compare(canvasItems("wsBadge").length, 3, "badges follow the same model")
+        compare(boxItem(2), b2, "adding a workspace keeps the others")
+        var b3 = boxItem(3)
+        compare(b3.x, view.boxes[2].x)
+        ws.splice(1, 1); view.rebuild()           // workspace 2 disappears
+        compare(canvasItems("wsBox").length, 2)
+        compare(boxItem(3), b3, "the survivor is the same instance")
+        compare(b3.x, view.boxes[1].x, "…in the freed column")
+        compare(b3.width, view.boxes[1].w)
+    }
+
+    // ---- reconcile motion ----
+
+    // Direct manipulation is never animated: once the drag is active, each pointer move is
+    // reflected in x exactly — even when the grab interrupts a glide in progress, whose
+    // animation must stop writing the moment the drag writes.
+    function test_dragged_tile_follows_pointer_exactly_even_when_grabbed_mid_glide() {
+        view.motion.scale = 1
+        var t = tile(), x0 = t.x
+        view.testModel.setProperty(0, "wx", x0 + 80)      // a reconcile move: the glide starts
+        wait(40)
+        verify(t.x > x0 + 1 && t.x < x0 + 79, "precondition: mid-glide, x=" + t.x)
+        var p = t.mapToItem(tc, t.width/2, t.height/2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x+12, p.y+2, 20)
+        mouseMove(tc, p.x+40, p.y+16, 20)
+        var xa = t.x
+        wait(100)
+        compare(t.x, xa, "the interrupted glide never writes again")
+        mouseMove(tc, p.x+50, p.y+16, 20)
+        compare(t.x, xa + 10, "exactly the pointer delta")
+        view.close()
+        mouseRelease(tc, p.x+50, p.y+16, Qt.LeftButton)
+    }
+    // After a release the tile settles by gliding to whatever geometry the reconcile hands
+    // back (here: a rejected move returning to the authoritative position) — never a jump.
+    function test_tile_settles_by_gliding_after_release() {
+        view.motion.scale = 1
+        client.floating = true; view.rebuild()
+        var t = tile(), before = t.x
+        dragBy(35, 20)
+        var dropX = t.x
+        verify(dropX > before + 10, "held at the drop point, x=" + dropX)
+        view.pendingMoves[client.address].deadline = Date.now() - 1
+        view.rebuild()                                     // rejected → wx returns to `before`
+        compare(view.testModel.get(0).wx, before)
+        verify(Math.abs(t.x - dropX) < 1, "glide starts from the drop point, x=" + t.x)
+        wait(60)
+        verify(t.x > before + 1 && t.x < dropX - 1, "half-way, x=" + t.x)
+        wait(220)
+        compare(t.x, before)
+    }
+    // A rebuild that changes nothing produces no motion: x and width hold still.
+    function test_identical_rebuild_produces_no_motion() {
+        view.motion.scale = 1
+        var t = tile(), x = t.x, w = t.width, b2 = boxItem(2), bx = b2.x
+        view.rebuild(); view.rebuild()
+        wait(30)
+        compare(t.x, x); compare(t.width, w); compare(b2.x, bx)
+        wait(100)
+        compare(t.x, x); compare(t.width, w); compare(b2.x, bx)
+    }
+    // Layout glides must not start while the picker is closed: `_reconcileStep` and friends
+    // keep rebuilding after close, and a glide begun then would still be running (Behaviors
+    // don't stop an in-flight transition) if the picker reopens within its duration.
+    function test_no_layout_motion_starts_while_closed() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.testModel.setProperty(0, "wx", view.testModel.get(0).wx + 80)
+        compare(tile().x, view.testModel.get(0).wx, "placed, not glided, while closed")
+        view.open(); wait(350)                              // leave the fixture clean
+    }
+    // Live-shell bug: mapping the PanelWindow is synchronous and can land ~40ms after `opened`
+    // flips true, changing panel.width and firing a synchronous rebuild before the entrance even
+    // starts. That rebuild must place at the new layout, not glide from the previous one — the
+    // entrance gate (`!enterAnim.running`) doesn't cover this gap; only openSettle does.
+    function test_layout_change_while_the_surface_maps_places_not_glides() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        var b2 = boxItem(2), f = view.testFrame
+        // Emulate the width arriving mid-map: the instant `opened` flips true, widen the panel
+        // (a real shell would have this land from the compositor while mapping the surface).
+        function widen() { if (view.opened) { view.testPanel.width = 900; view.openedChanged.disconnect(widen) } }
+        view.openedChanged.connect(widen)
+        view.open()
+        compare(b2.x, view.boxes[1].x, "box placed at the new layout")
+        compare(f.x, view.boxes[view.selectedIndex].x, "frame placed")
+        wait(80)
+        compare(b2.x, view.boxes[1].x, "box still placed, not mid-glide")
+        compare(f.x, view.boxes[view.selectedIndex].x, "frame still placed, not mid-glide")
+        wait(300)
+    }
+    // Boxes and badges glide into the freed column when a workspace disappears; the tile
+    // inside a moving box glides with it (same Behavior, same duration).
+    function test_boxes_badges_and_tiles_glide_when_a_workspace_disappears() {
+        view.motion.scale = 1
+        var ws = view.compositor.workspaces.values
+        ws.push({id:3, monitor: ws[0].monitor, toplevels:{values:[]}}); view.rebuild()
+        var other = addTarget(3)                            // a window on workspace 3
+        var b3 = boxItem(3), from = b3.x, badges = canvasItems("wsBadge"), badge3 = badges[badges.length - 1]
+        compare(badge3.model.workspaceId, 3)
+        var children = view.testCanvas.children, t3 = null
+        for (var i = 0; i < children.length; i++)
+            if (children[i].model && children[i].model.address === "0x456") t3 = children[i]
+        var tFrom = t3.x
+        ws.splice(1, 1); view.rebuild()                     // workspace 2 disappears
+        var to = view.boxes[1].x, tTo = view.testModel.get(1).wx
+        verify(to < from && tTo < tFrom)
+        wait(80)
+        verify(b3.x < from - 1 && b3.x > to + 1, "box half-way, x=" + b3.x)
+        verify(badge3.x < from + 6 - 1 && badge3.x > to + 6 + 1, "badge half-way")
+        verify(t3.x < tFrom - 1 && t3.x > tTo + 1, "tile half-way, x=" + t3.x)
+        wait(200)
+        compare(b3.x, to); compare(badge3.x, to + 6); compare(t3.x, tTo)
+    }
+    // The card resizes with a glide when the canvas grows (a second row of workspaces).
+    function test_card_size_glides_when_the_layout_grows() {
+        view.motion.scale = 1
+        var card = view.testCard, h0 = card.implicitHeight
+        var ws = view.compositor.workspaces.values
+        for (var i = 3; i <= 8; i++) ws.push({id:i, monitor: ws[0].monitor, toplevels:{values:[]}})
+        view.rebuild()
+        var h1 = view.testCanvas.implicitHeight + 2 * card.pad + card.hintSpace
+        verify(h1 > h0 + 20, "precondition: a second row")
+        verify(card.implicitHeight < h1 - 1, "glide in flight, h=" + card.implicitHeight)
+        wait(250)
+        fuzzyCompare(card.implicitHeight, Math.min(h1, card.maxCardH), 0.5)
+    }
+
+    // ---- drop cues and appearance ----
+
+    // The workspace-level wash fades in over the target and fades out after release; it keeps
+    // its last geometry while fading out (no slide to 0,0).
+    function test_drop_wash_fades_in_and_out() {
+        view.motion.scale = 1
+        client.floating = true; view.rebuild()
+        var wash = view.testDropWash, b = view.boxes[1]
+        var t = tile(), p = t.mapToItem(tc, t.width/2, t.height/2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x+12, p.y+2, 20)
+        var goal = view.testCanvas.mapToItem(tc, b.x + b.w/2, b.y + b.h/2)
+        mouseMove(tc, goal.x, goal.y, 20)
+        wait(40)
+        verify(wash.opacity > 0 && wash.opacity < 1, "fading in, o=" + wash.opacity)
+        wait(150)
+        compare(wash.opacity, 1)
+        view.close()
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        wait(40)
+        verify(wash.opacity > 0 && wash.opacity < 1, "fading out, o=" + wash.opacity)
+        compare(wash.x, b.x, "keeps the last box while fading out")
+        wait(150)
+        compare(wash.opacity, 0); verify(!wash.visible)
+    }
+    function insertHalfOf(t) {
+        for (var i = 0; i < t.children.length; i++)
+            if (t.children[i].objectName === "insertHalf") return t.children[i]
+        fail("insertHalf not found")
+    }
+    // The tiled-insert half on the anchor tile fades in, and keeps its side while fading out.
+    function test_insertion_half_fades_and_keeps_its_side_while_fading_out() {
+        view.motion.scale = 1
+        addTarget(1)
+        var target = view.testModel.get(1), t = tile(), p = t.mapToItem(tc, t.width/2, t.height/2)
+        var children = view.testCanvas.children, anchor = null
+        for (var i = 0; i < children.length; i++)
+            if (children[i].model && children[i].model.address === "0x456") anchor = children[i]
+        var half = insertHalfOf(anchor)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x+12, p.y+2, 20)
+        var goal = view.testCanvas.mapToItem(tc, target.wx + target.ww*0.9, target.wy + target.wh/2)
+        mouseMove(tc, goal.x, goal.y, 20)
+        compare(view.dropTargetSide, "right")
+        wait(40)
+        verify(half.opacity > 0 && half.opacity < 0.45, "fading in, o=" + half.opacity)
+        wait(150)
+        fuzzyCompare(half.opacity, 0.45, 0.01)
+        view.close()
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        compare(view.dropTargetSide, "")
+        wait(40)
+        verify(half.opacity > 0, "still fading out")
+        compare(half.x, anchor.width / 2, "keeps the right half while fading out")
+        wait(150)
+        compare(half.opacity, 0); verify(!half.visible)
+    }
+    // A window opened while the picker is showing fades and scales its tile in.
+    function test_new_window_while_open_fades_and_scales_in() {
+        view.motion.scale = 1
+        var other = addTarget(2)
+        var children = view.testCanvas.children, nt = null
+        for (var i = 0; i < children.length; i++)
+            if (children[i].model && children[i].model.address === "0x456") nt = children[i]
+        verify(nt !== null)
+        verify(nt.opacity < 1, "appears from transparent, o=" + nt.opacity)
+        verify(nt.scale < 1, "appears from 0.9, s=" + nt.scale)
+        wait(60)
+        verify(nt.opacity > 0.05 && nt.opacity < 0.95, "mid-way: still fading, o=" + nt.opacity)
+        verify(nt.appearScale > 0.905 && nt.appearScale < 0.995, "mid-way: still scaling, s=" + nt.appearScale)
+        wait(300)
+        compare(nt.opacity, 1); compare(nt.appearScale, 1)
+    }
+    // Tiles created by the first layout at open do not animate in: the entrance covers that.
+    function test_tiles_present_at_open_do_not_animate_in() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        view.testModel.clear()
+        view.open()
+        var t = tile()
+        compare(t.opacity, 1); compare(t.appearScale, 1)
+        wait(350)
     }
 }

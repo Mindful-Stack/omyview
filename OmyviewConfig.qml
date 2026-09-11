@@ -1,21 +1,31 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "logic.js" as Logic
 
 // User settings: ~/.config/omarchy/omyview.json (optional, watched). Every key has a default
-// here; a missing file, a parse error or an unknown key never changes behaviour.
+// (Logic.parseConfig); a missing file, a parse error or an unknown key never changes behaviour.
 QtObject {
     id: cfg
-    property bool scrim: true   // dim the desktop behind the picker
-    property bool hint: true    // key hints under the workspace grid
+    property bool scrim: true        // dim the desktop behind the picker
+    property bool hint: true         // key hints under the workspace grid
+    property string motion: "auto"   // "auto" follows Hyprland animations:enabled; "full" | "off"
+
+    // Hyprland's own animation switch, probed once per open (async, cheap) and cached. A
+    // probe that cannot be read counts as enabled (Logic.hyprAnimationsEnabled).
+    property bool hyprAnimations: true
+    // True once the first Hyprland probe has answered (or given up): motion never starts on a guess.
+    property bool motionResolved: false
+    readonly property string motionEffective: Logic.motionPolicy(motion, hyprAnimations)
+    function probeMotion() { hyprProc.running = true; probeFallback.restart() }
 
     readonly property string path: Quickshell.env("HOME") + "/.config/omarchy/omyview.json"
 
     function apply(raw) {
-        var o = {}
-        try { o = JSON.parse(String(raw || "")) || {} } catch (e) { o = {} }
-        cfg.scrim = (typeof o.scrim === "boolean") ? o.scrim : true
-        cfg.hint = (typeof o.hint === "boolean") ? o.hint : true
+        var o = Logic.parseConfig(raw)
+        cfg.scrim = o.scrim
+        cfg.hint = o.hint
+        cfg.motion = o.motion
     }
 
     property FileView file: FileView {
@@ -26,4 +36,24 @@ QtObject {
         onFileChanged: reload()
         onLoadFailed: cfg.apply("")
     }
+
+    property Process hyprProc: Process {
+        command: ["hyprctl", "-j", "getoption", "animations:enabled"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                cfg.hyprAnimations = Logic.hyprAnimationsEnabled(text)
+                cfg.motionResolved = true
+            }
+        }
+        onExited: cfg.motionResolved = true
+    }
+
+    // A missing/failing hyprctl must not leave motion off forever: give the probe 500ms, then
+    // resolve anyway (a probe that never lands counts as enabled, per Logic.hyprAnimationsEnabled's
+    // fail-open default).
+    property Timer probeFallback: Timer { interval: 500; onTriggered: cfg.motionResolved = true }
+
+    // Warm the cache so the very first open already follows the compositor.
+    Component.onCompleted: probeMotion()
 }

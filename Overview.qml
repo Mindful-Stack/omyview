@@ -48,6 +48,32 @@ Item {
 
     OmyviewConfig { id: config }
 
+    // Motion vocabulary. Every duration and easing in the picker comes from here; tiles get it
+    // as a property (they never import the shell). `scale` is a test hook (0 = instant);
+    // config `motion: "off"` (or "auto" with Hyprland animations disabled) zeroes everything.
+    // Motion also stays off until the first probe has answered (config.motionResolved): with
+    // the component kept loaded, a fresh summon can race a probe that hasn't landed yet, and
+    // motion must never start on a guess.
+    readonly property QtObject motion: QtObject {
+        property real scale: 1
+        readonly property bool enabled: config.motionEffective !== "off" && config.motionResolved && scale > 0
+        readonly property int fast:   enabled ? Math.round(90 * scale) : 0
+        readonly property int normal: enabled ? Math.round(160 * scale) : 0
+        readonly property int enter:  enabled ? Math.round(200 * scale) : 0
+        readonly property int exit:   enabled ? Math.round(120 * scale) : 0
+        readonly property int move: Easing.OutCubic       // layout movement
+        readonly property int hover: Easing.OutQuad       // hover, lift, release
+        readonly property int entrance: Easing.OutBack    // overshoot is deliberately small; raise towards Qt's 1.70158 default if the entrance feels flat
+        readonly property real overshoot: 1.2             // Qt default is 1.70158; "small"
+    }
+    // Layout Behaviors (frame, tiles, boxes, card size) run only when motion is on and the
+    // entrance is not playing: delegates are created at their final geometry, and the settle
+    // rebuilds during the first 200 ms must place, not glide. And never while closed — reconcile
+    // rebuilds keep running after close, and a glide started then would finish under the next entrance.
+    // Also never during openSettle: mapping the surface can change panel.width and trigger a
+    // synchronous rebuild before the entrance even starts, and that rebuild must place too.
+    readonly property bool layoutMotion: motion.enabled && opened && !enterAnim.running && !openSettle.running
+
     // headerH is the chip band per monitor group; logic.js lays it out only when more than
     // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.
     readonly property var params: ({
@@ -307,12 +333,13 @@ Item {
     }
     function endDrag() {
         var tile = dragTile
+        if (tile) tile.restoreDrag()        // Behaviors still off: park at the drop point
         dragTile = null
         draggingAddress = ""
         dropTargetWs = -1
         dropTargetAddress = ""
         dropTargetSide = ""
-        if (tile) tile.restoreDrag()
+        if (tile) tile.rebindTargets()      // Behaviors on: glide to the model
     }
     Timer {
         id: edgeScroll
@@ -346,16 +373,47 @@ Item {
         for (var u = 0; u < d.updates.length; u++) {
             var tu = d.updates[u]
             if (root.draggingAddress === tu.address || pendingMoves[tu.address]) continue   // grab is authoritative
-            var iu = indexOf(tu.address)
-            if (iu >= 0) tilesModel.set(iu, { wx: tu.x, wy: tu.y, ww: tu.w, wh: tu.h,
-                                              title: titleFor(tu.address), cls: clsFor(tu.address), wsid: tu.workspaceId,
-                                              floating: floatingFor(tu.address),
-                                              layer: tu.layer, fullscreen: tu.fullscreen })
+            var iu = indexOf(tu.address); if (iu < 0) continue
+            var row = { wx: tu.x, wy: tu.y, ww: tu.w, wh: tu.h,
+                        title: titleFor(tu.address), cls: clsFor(tu.address),
+                        wsid: tu.workspaceId, floating: floatingFor(tu.address),
+                        layer: tu.layer, fullscreen: tu.fullscreen }
+            if (rowDiffers(tilesModel.get(iu), row)) tilesModel.set(iu, row)
         }
         for (var rmi = 0; rmi < d.removes.length; rmi++) {
             if (root.draggingAddress === d.removes[rmi] || pendingMoves[d.removes[rmi]]) continue // cancel handled elsewhere
             var ir = indexOf(d.removes[rmi]); if (ir >= 0) tilesModel.remove(ir)
         }
+    }
+
+    // Roles differ across two rows only by value: compare before `set`, because ListModel.set
+    // emits a change even for identical values, and every binding (and Behavior) downstream
+    // would re-evaluate on each 60 ms settle tick.
+    function rowDiffers(cur, next) {
+        for (var k in next) if (cur[k] !== next[k]) return true
+        return false
+    }
+    function boxIndex(workspaceId) {
+        for (var i = 0; i < boxesModel.count; i++)
+            if (boxesModel.get(i).workspaceId === workspaceId) return i
+        return -1
+    }
+    // Reconcile the workspace boxes in place, keyed by workspace id (drag-safe by nature: a
+    // box never owns a pointer grab). Roles are prefixed so `model.bx` cannot be confused
+    // with the delegate's own x.
+    function applyBoxes(boxes) {
+        var seen = {}
+        for (var i = 0; i < boxes.length; i++) {
+            var b = boxes[i]
+            var row = { workspaceId: b.workspaceId, bx: b.x, by: b.y, bw: b.w, bh: b.h,
+                        focused: !!b.focused, occupied: !!b.occupied }
+            seen[b.workspaceId] = true
+            var idx = boxIndex(b.workspaceId)
+            if (idx < 0) boxesModel.append(row)
+            else if (rowDiffers(boxesModel.get(idx), row)) boxesModel.set(idx, row)
+        }
+        for (var r = boxesModel.count - 1; r >= 0; r--)
+            if (!seen[boxesModel.get(r).workspaceId]) boxesModel.remove(r)
     }
 
     property var _clsByAddress: ({})
@@ -396,6 +454,7 @@ Item {
         var res = Logic.layout(input)
         root.boxes = res.boxes
         root.groups = res.groups
+        applyBoxes(res.boxes)
         canvas.implicitWidth = res.canvasSize.w
         canvas.implicitHeight = res.canvasSize.h
         applyTiles(res.tiles)
@@ -432,21 +491,71 @@ Item {
         Hyprland.dispatch('hl.dsp.focus({ workspace = "' + id + '" })'); root.close()
     }
     function open() {
+        if (opened) return                          // already open: not a second entrance
+        openSettle.restart()                        // placement window: see layoutMotion
         if (typeof Hyprland.refreshMonitors === "function") Hyprland.refreshMonitors()
+        config.probeMotion()                       // async; result lands for this or the next open
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
+        _showVisuals(true)                         // before the first rebuild: layout motion is gated on it
         rebuild()          // instant paint from current data
+        flick.contentX = 0; flick.contentY = 0   // fresh scroll every open (kept-loaded state would otherwise leak the last offset)
         ensureSelectedVisible()
         scheduleRebuild()  // then settle as fresh toplevel geometry lands
         Qt.callLater(function () { keyCatcher.forceActiveFocus() })
     }
     function close() {
+        if (!opened) return                        // a click on the scrim mid-fade is not a second close
         endDrag()
-        // Every dispatched operation is atomic in the compositor; the reconcile timer only
-        // clears optimistic state.
+        // settleTimer is open-only; reconcileTimer keeps running (bounded by the 1.8 s
+        // deadlines): it clears optimistic display state (pendingMoves / fsPending) so a
+        // re-summon inside that window shows authoritative geometry, and with keepLoaded the
+        // component is alive to do it. No compositor operation depends on it — each one is a
+        // single atomic chunk (logic.js).
         settleTimer.stop()
-        opened = false
+        opened = false                             // releases keyboard focus at once (see panel)
+        _showVisuals(false)                        // the window unmaps when card.opacity reaches 0
     }
     function toggle() { if (opened) close(); else open() }
+    // Card + scrim in or out. With motion off the values are set directly: nothing animates,
+    // and `panel.visible` follows synchronously.
+    function _showVisuals(on) {
+        if (root.motion.enabled) {
+            if (on) { exitAnim.stop(); enterAnim.restart() }
+            else    { enterAnim.stop(); exitAnim.restart() }
+            return
+        }
+        enterAnim.stop(); exitAnim.stop()
+        card.scale = 1
+        card.opacity = on ? 1 : 0
+        scrimRect.opacity = on ? 1 : 0
+    }
+    ParallelAnimation {
+        id: enterAnim
+        NumberAnimation { target: scrimRect; property: "opacity"; to: 1
+                          duration: root.motion.normal; easing.type: root.motion.move }
+        NumberAnimation { target: card; property: "opacity"; to: 1
+                          duration: root.motion.enter; easing.type: root.motion.move }
+        NumberAnimation { target: card; property: "scale"; from: 0.96; to: 1
+                          duration: root.motion.enter; easing.type: root.motion.entrance
+                          easing.overshoot: root.motion.overshoot }
+    }
+    ParallelAnimation {
+        id: exitAnim
+        NumberAnimation { target: scrimRect; property: "opacity"; to: 0
+                          duration: root.motion.exit; easing.type: root.motion.move }
+        NumberAnimation { target: card; property: "opacity"; to: 0
+                          duration: root.motion.exit; easing.type: root.motion.move }
+        NumberAnimation { target: card; property: "scale"; to: 0.98
+                          duration: root.motion.exit; easing.type: root.motion.move }
+    }
+    // Motion switched off while an open/close animation is in flight (a late probe result,
+    // or a config edit): stop it and land on the final values at once. Layout Behaviors and
+    // tile appear animations already in flight finish at their correct targets on their own
+    // (≤ 160 ms) — only the enter/exit fade needs this nudge.
+    Connections {
+        target: root.motion
+        function onEnabledChanged() { if (!root.motion.enabled) root._showVisuals(root.opened) }
+    }
 
     // Ask Hyprland for fresh client data, then rebuild every 60ms until five quiet ticks have
     // passed, so a window opened while the overview is visible appears once its async geometry
@@ -476,7 +585,15 @@ Item {
         }
         onRunningChanged: if (!running) refreshOwed = false
     }
+    // The open settle window: from the first statement of open() until the settle rebuilds
+    // are done, layout writes place rather than glide. Covers the gap before the entrance
+    // starts (mapping the surface can change panel.width and rebuild synchronously) and runs
+    // through the settle ticks (nominally 5 × 60 ms; the two timers are not ordered exactly,
+    // but by then identical rebuilds emit nothing).
+    Timer { id: openSettle; interval: 300 }
     ListModel { id: tilesModel }
+    // Rows are in first-seen order, not layout order; address them by workspaceId, never by index.
+    ListModel { id: boxesModel }
 
     // Window/workspace changes while open: refresh + settle (never an immediate stale rebuild).
     Connections {
@@ -486,26 +603,34 @@ Item {
 
     PanelWindow {
         id: panel
-        visible: root.opened
+        // Stays mapped through the exit fade (the pattern Omarchy's PopupCard uses); keyboard
+        // focus is released the moment `opened` drops, not when the fade ends.
+        visible: root.opened || card.opacity > 0
         screen: root.targetScreen
         anchors { top: true; bottom: true; left: true; right: true }
         color: "transparent"
         WlrLayershell.namespace: "omyview"
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+        WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        // Pointer input is released the moment `opened` drops, like keyboard focus: an empty
+        // input region makes the fading surface click-through.
+        mask: root.opened ? null : emptyRegion
+        Region { id: emptyRegion }
         exclusionMode: ExclusionMode.Ignore
 
-        Rectangle { anchors.fill: parent; color: root.scrim; visible: config.scrim }
-        MouseArea { anchors.fill: parent; onClicked: root.close() }
+        Rectangle { id: scrimRect; anchors.fill: parent; color: root.scrim; visible: config.scrim; opacity: 0 }
+        MouseArea { anchors.fill: parent; enabled: root.opened; onClicked: root.close() }
 
         // A 28% shadow reads on light themes but vanishes on dark ones (Tokyo Night sweep),
         // so the alpha follows the card's luminance.
-        SoftShadow { target: card; color: Qt.rgba(0, 0, 0, root.darkTheme ? 0.55 : 0.28) }
+        SoftShadow { target: card; scale: card.scale; opacity: card.opacity
+                     color: Qt.rgba(0, 0, 0, root.darkTheme ? 0.55 : 0.28) }
         Rectangle {
             id: card
             anchors.centerIn: parent
             radius: root.cardRadius
             color: root.background
+            opacity: 0        // the entrance brings it in; panel.visible follows this
             readonly property int pad: Math.round(Style.space(12))
             // Space the key hints take under the grid, zero when they are switched off.
             readonly property real hintSpace: config.hint ? hint.implicitHeight + 8 : 0
@@ -516,6 +641,12 @@ Item {
             readonly property real maxCardH: panel.height > 0 ? panel.height - 64 : 900
             implicitWidth: Math.min(canvas.implicitWidth + pad * 2, maxCardW)
             implicitHeight: Math.min(canvas.implicitHeight + pad * 2 + hintSpace, maxCardH)
+            // Card resize (workspaces added/removed, columns change) glides; the Flickable
+            // viewport follows card.width, the canvas content is already at its new size.
+            Behavior on implicitWidth  { enabled: root.layoutMotion
+                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+            Behavior on implicitHeight { enabled: root.layoutMotion
+                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
             MouseArea { anchors.fill: parent; onClicked: {} }
 
             Item {
@@ -574,33 +705,43 @@ Item {
 
                     // boxes layer
                     Repeater {
-                        model: root.opened ? root.boxes : []
+                        model: boxesModel
                         Rectangle {
-                            required property var modelData
-                            readonly property bool isSel: modelData.workspaceId === root.selectedId
+                            id: boxItem
+                            required property var model
+                            objectName: "wsBox"
                             readonly property bool isDrop: root.draggingAddress !== "" &&
-                                                           modelData.workspaceId === root.dropTargetWs
-                            x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h
+                                                           model.workspaceId === root.dropTargetWs
+                            x: model.bx; y: model.by; width: model.bw; height: model.bh
+                            Behavior on x      { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on y      { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on width  { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on height { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                             radius: root.boxRadius
                             // a well sunk into the card; no outline
                             color: isDrop ? root.dropWellColor
-                                 : modelData.focused ? root.selBackground
-                                 : modelData.occupied ? root.wellColor : root.emptyWellColor
+                                 : model.focused ? root.selBackground
+                                 : model.occupied ? root.wellColor : root.emptyWellColor
 
                             // big low-contrast numeral, only where nothing would hide it
                             Text {
                                 objectName: "wsNumeral"
                                 anchors.centerIn: parent
-                                visible: !modelData.occupied
-                                text: root.wsLabel(modelData.workspaceId)
+                                visible: !boxItem.model.occupied
+                                text: root.wsLabel(boxItem.model.workspaceId)
                                 color: root.foreground
                                 opacity: 0.10
-                                font.pixelSize: Math.round(modelData.h * 0.45)
+                                font.pixelSize: Math.round(boxItem.height * 0.45)
                                 font.weight: Font.DemiBold
                             }
                             MouseArea {   // click empty area of a workspace => jump
                                 anchors.fill: parent
-                                onClicked: root.jump(modelData.workspaceId)
+                                enabled: root.opened
+                                onClicked: root.jump(boxItem.model.workspaceId)
                             }
                         }
                     }
@@ -609,7 +750,7 @@ Item {
                     // the focused monitor's label is accented. Shown only when the layout has
                     // more than one group (then each group carries a non-zero header band).
                     Repeater {
-                        model: root.opened && root.groups.length > 1 ? root.groups : []
+                        model: panel.visible && root.groups.length > 1 ? root.groups : []
                         Text {
                             required property var modelData
                             x: modelData.x + 4; y: modelData.y
@@ -631,7 +772,18 @@ Item {
                         model: tilesModel
                         WindowTile {
                             required property var model
-                            x: model.wx; y: model.wy; width: model.ww; height: model.wh
+                            // Layout motion runs on these glide targets, not on x/y: the drag breaks the x/y
+                            // bindings and owns them directly, so a glide still in flight can never fight the
+                            // pointer. Release parks the targets at the drop point (Behaviors off), rebinds x/y,
+                            // then rebinds the targets to the model — that rebind is the settle glide.
+                            property real targetX: model.wx
+                            property real targetY: model.wy
+                            x: targetX; y: targetY
+                            width: model.ww; height: model.wh
+                            Behavior on targetX { enabled: root.layoutMotion && !windowTile.dragging
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on targetY { enabled: root.layoutMotion && !windowTile.dragging
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                             cls: model.cls
                             tileLayer: model.layer
                             fullscreen: model.fullscreen
@@ -639,22 +791,45 @@ Item {
                             title: model.title
                             dragging: root.draggingAddress === model.address
                             handle: root.handleByAddress[model.address] || null
-                            capMode: "live"
+                            // Kept loaded while hidden (keepLoaded): captures run only while the
+                            // surface is mapped.
+                            capMode: panel.visible ? "live" : "icon"
                             borderColor: root.dropTargetAddress === model.address ? root.accent : root.hairline
                             dropTarget: root.dropTargetAddress === model.address
                             dropSide: root.dropTargetAddress === model.address ? root.dropTargetSide : ""
                             bg: root.background; fg: root.foreground
+                            motion: root.motion
                             floating: model.floating
                             fontFamily: root.fontFamily
                             titleSize: root.captionSize
+                            // Layout motion: reconcile moves and the post-drop settle glide;
+                            // the drag itself writes x/y straight through (Behavior disabled),
+                            // and a drag write stops any glide that was still running.
+                            Behavior on width  { enabled: root.layoutMotion && !windowTile.dragging
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on height { enabled: root.layoutMotion && !windowTile.dragging
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                             id: windowTile
                             readonly property bool dragMoved: dragArea.moved
+                            // Called while `dragging` is still true (Behaviors off): park the glide targets at the
+                            // drop point and give x/y their bindings back, so nothing moves yet.
                             function restoreDrag() {
                                 dragArea.drag.target = undefined
                                 dragArea.moved = false
-                                x = Qt.binding(function () { return model.wx })
-                                y = Qt.binding(function () { return model.wy })
+                                targetX = x; targetY = y
+                                x = Qt.binding(function () { return targetX })
+                                y = Qt.binding(function () { return targetY })
                             }
+                            // Called after `dragging` is cleared (Behaviors on): rebinding the targets to the model
+                            // glides from the drop point to wherever the model says — the settle, or the snap-back.
+                            function rebindTargets() {
+                                targetX = Qt.binding(function () { return model.wx })
+                                targetY = Qt.binding(function () { return model.wy })
+                            }
+                            // New while showing → appear. Not at open (the entrance covers that,
+                            // and layoutMotion already requires opened), not while closed
+                            // (reconcile rebuilds can still add rows then).
+                            Component.onCompleted: if (root.layoutMotion) appear()
                             Component.onDestruction: {
                                 if (root.dragTile === windowTile) root.endDrag()
                             }
@@ -662,6 +837,7 @@ Item {
                             MouseArea {
                                 id: dragArea
                                 anchors.fill: parent
+                                enabled: root.opened
                                 acceptedButtons: Qt.LeftButton | Qt.MiddleButton
                                 preventStealing: true
                                 drag.target: undefined
@@ -672,9 +848,12 @@ Item {
                                     delete root.pendingMoves[model.address]
                                     delete root.pendingFullscreen[model.address]
                                     root.setTileRoles(model.address, { fsPending: false })
-                                    windowTile.beginGrab(m.x, m.y)   // ghost shrinks around the grab point
+                                    // Mark the drag first: the layout Behaviors are gated on
+                                    // `dragging`, and beginGrab may offset x/y (re-grab during
+                                    // the release animation), which must place, not glide.
                                     root.draggingAddress = model.address
                                     root.dragTile = windowTile
+                                    windowTile.beginGrab(m.x, m.y)   // ghost shrinks around the grab point
                                     moved = false
                                     drag.target = windowTile
                                     var p = mapToItem(flick, m.x, m.y)
@@ -717,21 +896,26 @@ Item {
                     // what the previews contain. One chip per box, top-left corner. Focused
                     // workspace = accent chip. No mouse handling, so clicks fall through.
                     Repeater {
-                        model: root.opened ? root.boxes : []
+                        model: boxesModel
                         Rectangle {
-                            required property var modelData
+                            id: badge
+                            required property var model
                             objectName: "wsBadge"
-                            x: modelData.x + 6; y: modelData.y + 6
+                            x: model.bx + 6; y: model.by + 6
+                            Behavior on x { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                            Behavior on y { enabled: root.layoutMotion
+                                NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                             z: 40   // above resting/hovered tiles, below the selection frame
                             height: badgeText.implicitHeight + 6
                             width: Math.max(height, badgeText.implicitWidth + 10)
                             radius: 5
-                            color: modelData.focused ? root.accent : root.badgeColor
+                            color: model.focused ? root.accent : root.badgeColor
                             Text {
                                 id: badgeText
                                 anchors.centerIn: parent
-                                text: root.wsLabel(modelData.workspaceId)
-                                color: modelData.focused ? root.background : root.foreground
+                                text: root.wsLabel(badge.model.workspaceId)
+                                color: badge.model.focused ? root.background : root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: root.labelSize
                                 font.weight: Font.DemiBold
@@ -756,9 +940,16 @@ Item {
                         border.width: 2
                         border.color: root.accent
                         opacity: root.draggingAddress !== "" ? 0.4 : 1
-                        Behavior on opacity { NumberAnimation { duration: 120 } }
-                        Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-                        Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                        Behavior on opacity { enabled: root.motion.enabled
+                            NumberAnimation { duration: root.motion.fast; easing.type: root.motion.hover } }
+                        Behavior on x      { enabled: root.layoutMotion
+                            NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                        Behavior on y      { enabled: root.layoutMotion
+                            NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                        Behavior on width  { enabled: root.layoutMotion
+                            NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
+                        Behavior on height { enabled: root.layoutMotion
+                            NumberAnimation { duration: root.motion.normal; easing.type: root.motion.move } }
                     }
 
                     // drop wash: the workspace-level drop cue, drawn ABOVE the previews so a
@@ -771,9 +962,15 @@ Item {
                         readonly property var box:
                             (root.draggingAddress !== "" && root.dropTargetAddress === "")
                                 ? root.boxForWs(root.dropTargetWs) : null
-                        visible: box !== null
-                        x: box ? box.x : 0; y: box ? box.y : 0
-                        width: box ? box.w : 0; height: box ? box.h : 0
+                        // Geometry sticks to the last target so the fade-out stays in place.
+                        property var shownBox: null
+                        onBoxChanged: if (box) shownBox = box
+                        visible: opacity > 0
+                        opacity: box !== null ? 1 : 0
+                        Behavior on opacity { enabled: root.motion.enabled
+                            NumberAnimation { duration: root.motion.fast; easing.type: root.motion.hover } }
+                        x: shownBox ? shownBox.x : 0; y: shownBox ? shownBox.y : 0
+                        width: shownBox ? shownBox.w : 0; height: shownBox ? shownBox.h : 0
                         z: 60   // above resting/hovered tiles and the selection frame, below the ghost
                         radius: root.boxRadius
                         color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.22)

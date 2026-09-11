@@ -61,10 +61,15 @@ consumer-side install + SUPER+P bind.
 - SUPER+P toggles open AND close even under the overlay's exclusive keyboard focus
   (Hyprland forwards configured keybinds over the layer); bare keys still reach the overlay.
 - **Every compositor operation is one atomic Lua chunk** (`logic.js`: `tiledInsertLua`,
-  `floatingMoveLua`, `unfullscreenLua`). The shell unloads the overlay on toggle-close
-  (`keepLoaded: false`), so nothing in `Overview.qml` may be required to *finish* an
-  operation — `pendingMoves` is optimistic display state only. Chunk failures are printed to
-  the Hyprland log (`[Lua] omyview: … failed: …`) and shown as a notification.
+  `floatingMoveLua`, `unfullscreenLua`) — kept on its own merits, not because of `keepLoaded`.
+  Chunk failures are printed to the Hyprland log (`[Lua] omyview: … failed: …`) and shown as a
+  notification. `manifest.json` sets `keepLoaded: true` (the exit fade needs the component
+  alive after `close()`, and the reconcile tail that clears optimistic display state can then
+  finish too; no compositor operation depends on it — each is a single atomic chunk), so
+  cross-summon state now exists: `tilesModel`/`boxesModel` and the
+  Flickable's scroll position survive between summons. `open()` reconciles it — `rebuild()`
+  re-derives the models from fresh compositor data, and the scroll position is reset to
+  `(0, 0)` so a kept-loaded offset never leaks into the next summon.
 - **`hl.dispatch` never raises** (0.56.2 `hlDispatch`): a failed dispatcher returns
   `{ ok = false, error = … }`. Every chunk defines `run(d)` that raises on that inside its pcall;
   dispatch a guarded step through `run(`, never bare `hl.dispatch(` (the shape test enforces it).
