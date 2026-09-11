@@ -176,12 +176,29 @@ TestCase {
         compare(view.matches.length, 0)
         compare(row("0xC").matched, false)
     }
+    // Distinguishes: a background rebuild scrolling the viewport when the selected match did not
+    // change (any compositor event would yank the view back onto the match every settle tick).
+    function test_background_rebuild_keeps_the_scroll_position() {
+        type("slack")
+        view.testFlick.contentY = 40
+        view.rebuild()
+        compare(view.selectedMatchAddress, "0xB")
+        compare(view.testFlick.contentY, 40, "same match, no scroll")
+    }
     // Distinguishes: a window on a special workspace leaking into the match list (the spec
-    // excludes the scratchpad by excluding special workspaces from the input).
+    // excludes the scratchpad by excluding special workspaces from the input). Positive control
+    // first: the same window matches when it is on a normal workspace, so a broken matcher
+    // cannot pass this test by matching nothing at all.
     function test_special_workspace_windows_never_match() {
-        view.compositor.workspaces.values.push(wsRow(-99, [client("0xS", "Bitwarden", "secretpad", 100)]))
+        var special = wsRow(4, [client("0xS", "Bitwarden", "secretpad", 100)])
+        view.compositor.workspaces.values.push(special)
         view.rebuild()
         type("secretpad")
-        compare(view.matches.length, 0)
+        compare(view.matches.length, 1, "positive control: on a normal workspace it matches")
+        keyClick(Qt.Key_Escape)
+        special.id = -99
+        view.rebuild()
+        type("secretpad")
+        compare(view.matches.length, 0, "on a special workspace it is not in the input at all")
     }
 }

@@ -206,13 +206,15 @@ Item {
     function rematchAfterRebuild() {
         if (!query.length) return
         var keep = selectedMatchAddress, oldIndex = matchIndex
-        matches = Logic.findMatches(query, _windows)
+        var next = Logic.findMatches(query, _windows)
+        if (!sameAddresses(matches, next)) matches = next
         var idx = -1
         for (var i = 0; i < matches.length; i++) if (matches[i].address === keep) { idx = i; break }
         if (idx < 0 && matches.length) idx = Math.min(Math.max(oldIndex, 0), matches.length - 1)
         matchIndex = idx
+        var changed = selectedMatchAddress !== keep
         applyMatchRoles()
-        followMatch()
+        followMatch(changed)
     }
     function cycleMatch(step) {
         if (!matches.length) return
@@ -231,14 +233,23 @@ Item {
             if (rowDiffers(cur, next)) tilesModel.set(t, next)
         }
     }
-    // Move the box selection to the selected match's workspace and scroll it into view.
-    function followMatch() {
+    // Are two ranked match arrays the same sequence of addresses? Used to avoid reassigning
+    // `matches` (and firing matchesChanged) on every settle tick when the ranking is unchanged.
+    function sameAddresses(a, b) {
+        if (a.length !== b.length) return false
+        for (var i = 0; i < a.length; i++) if (a[i].address !== b[i].address) return false
+        return true
+    }
+    // Move the box selection to the selected match's workspace, scrolling it into view only
+    // when `scroll` is not explicitly false — a background rebuild that keeps the same match
+    // must not scroll (it would yank the viewport back on every settle tick).
+    function followMatch(scroll) {
         var addr = selectedMatchAddress; if (!addr) return
         var win = _windowByAddress[addr]; if (!win) return
         var idx = Logic.indexOfWorkspace(boxes, win.workspaceId)
         if (idx < 0) return
         selectedIndex = idx
-        ensureSelectedVisible()
+        if (scroll !== false) ensureSelectedVisible()
     }
     // Query cleared: back to the pre-query workspace; if it is gone, the focused workspace,
     // then the first box. Deliberately not rebuild()'s nearest-position rule — after a search
