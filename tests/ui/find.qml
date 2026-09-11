@@ -451,8 +451,8 @@ TestCase {
     // that is what the production code actually and correctly does; the layout assertions
     // (the actual point of this test, per its comment) are unaffected by match count.
     function test_long_query_stays_inside_the_card() {
-        var long = ""; for (var i = 0; i < 40; i++) long += "slack"      // 200 characters
-        type(long)
+        var query200 = ""; for (var i = 0; i < 40; i++) query200 += "slack"   // 200 characters
+        type(query200)
         var bar = view.testBar, q = childNamed(bar, "findQuery"), c = childNamed(bar, "findCount")
         verify(bar.width <= view.testCard.width, "bar never wider than the card")
         verify(bar.width > 200, "fixture must be wide enough that the count could drift")
