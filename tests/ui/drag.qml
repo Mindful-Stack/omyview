@@ -972,6 +972,26 @@ TestCase {
         compare(tile().x, view.testModel.get(0).wx, "placed, not glided, while closed")
         view.open(); wait(350)                              // leave the fixture clean
     }
+    // Live-shell bug: mapping the PanelWindow is synchronous and can land ~40ms after `opened`
+    // flips true, changing panel.width and firing a synchronous rebuild before the entrance even
+    // starts. That rebuild must place at the new layout, not glide from the previous one — the
+    // entrance gate (`!enterAnim.running`) doesn't cover this gap; only openSettle does.
+    function test_layout_change_while_the_surface_maps_places_not_glides() {
+        view.motion.scale = 1
+        view.close(); wait(250)
+        var b2 = boxItem(2), f = view.testFrame
+        // Emulate the width arriving mid-map: the instant `opened` flips true, widen the panel
+        // (a real shell would have this land from the compositor while mapping the surface).
+        function widen() { if (view.opened) { view.testPanel.width = 900; view.openedChanged.disconnect(widen) } }
+        view.openedChanged.connect(widen)
+        view.open()
+        compare(b2.x, view.boxes[1].x, "box placed at the new layout")
+        compare(f.x, view.boxes[view.selectedIndex].x, "frame placed")
+        wait(80)
+        compare(b2.x, view.boxes[1].x, "box still placed, not mid-glide")
+        compare(f.x, view.boxes[view.selectedIndex].x, "frame still placed, not mid-glide")
+        wait(300)
+    }
     // Boxes and badges glide into the freed column when a workspace disappears; the tile
     // inside a moving box glides with it (same Behavior, same duration).
     function test_boxes_badges_and_tiles_glide_when_a_workspace_disappears() {

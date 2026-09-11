@@ -70,7 +70,9 @@ Item {
     // entrance is not playing: delegates are created at their final geometry, and the settle
     // rebuilds during the first 200 ms must place, not glide. And never while closed — reconcile
     // rebuilds keep running after close, and a glide started then would finish under the next entrance.
-    readonly property bool layoutMotion: motion.enabled && opened && !enterAnim.running
+    // Also never during openSettle: mapping the surface can change panel.width and trigger a
+    // synchronous rebuild before the entrance even starts, and that rebuild must place too.
+    readonly property bool layoutMotion: motion.enabled && opened && !enterAnim.running && !openSettle.running
 
     // headerH is the chip band per monitor group; logic.js lays it out only when more than
     // one monitor has workspaces (see Logic.layout), so a single monitor gets no band.
@@ -490,6 +492,7 @@ Item {
     }
     function open() {
         if (opened) return                          // already open: not a second entrance
+        openSettle.restart()                        // placement window: see layoutMotion
         if (typeof Hyprland.refreshMonitors === "function") Hyprland.refreshMonitors()
         config.probeMotion()                       // async; result lands for this or the next open
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
@@ -578,6 +581,11 @@ Item {
         }
         onRunningChanged: if (!running) refreshOwed = false
     }
+    // The open settle window: from the first statement of open() until the settle rebuilds
+    // are done, layout writes place rather than glide. Covers the gap before the entrance
+    // starts (mapping the surface can change panel.width and rebuild synchronously) and the
+    // ~300 ms of settle ticks after it.
+    Timer { id: openSettle; interval: 300 }
     ListModel { id: tilesModel }
     // Rows are in first-seen order, not layout order; address them by workspaceId, never by index.
     ListModel { id: boxesModel }
