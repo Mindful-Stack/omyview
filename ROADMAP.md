@@ -63,9 +63,10 @@ consumer-side install + SUPER+P bind.
 - **Every compositor operation is one atomic Lua chunk** (`logic.js`: `tiledInsertLua`,
   `floatingMoveLua`, `unfullscreenLua`) — kept on its own merits, not because of `keepLoaded`.
   Chunk failures are printed to the Hyprland log (`[Lua] omyview: … failed: …`) and shown as a
-  notification. `manifest.json` sets `keepLoaded: true` (the exit fade, and the reconcile
-  tail's positioning phase of a floating cross-workspace drop, both need the component alive
-  after `close()`), so cross-summon state now exists: `tilesModel`/`boxesModel` and the
+  notification. `manifest.json` sets `keepLoaded: true` (the exit fade needs the component
+  alive after `close()`, and the reconcile tail that clears optimistic display state can then
+  finish too; no compositor operation depends on it — each is a single atomic chunk), so
+  cross-summon state now exists: `tilesModel`/`boxesModel` and the
   Flickable's scroll position survive between summons. `open()` reconciles it — `rebuild()`
   re-derives the models from fresh compositor data, and the scroll position is reset to
   `(0, 0)` so a kept-loaded offset never leaks into the next summon.

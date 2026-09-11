@@ -507,8 +507,10 @@ Item {
         if (!opened) return                        // a click on the scrim mid-fade is not a second close
         endDrag()
         // settleTimer is open-only; reconcileTimer keeps running (bounded by the 1.8 s
-        // deadlines): a floating cross-workspace drop still needs its positioning phase after
-        // the transfer is acknowledged, and with keepLoaded the component is alive to finish it.
+        // deadlines): it clears optimistic display state (pendingMoves / fsPending) so a
+        // re-summon inside that window shows authoritative geometry, and with keepLoaded the
+        // component is alive to do it. No compositor operation depends on it — each one is a
+        // single atomic chunk (logic.js).
         settleTimer.stop()
         opened = false                             // releases keyboard focus at once (see panel)
         _showVisuals(false)                        // the window unmaps when card.opacity reaches 0
@@ -585,8 +587,9 @@ Item {
     }
     // The open settle window: from the first statement of open() until the settle rebuilds
     // are done, layout writes place rather than glide. Covers the gap before the entrance
-    // starts (mapping the surface can change panel.width and rebuild synchronously) and the
-    // ~300 ms of settle ticks after it.
+    // starts (mapping the surface can change panel.width and rebuild synchronously) and runs
+    // through the settle ticks (nominally 5 × 60 ms; the two timers are not ordered exactly,
+    // but by then identical rebuilds emit nothing).
     Timer { id: openSettle; interval: 300 }
     ListModel { id: tilesModel }
     // Rows are in first-seen order, not layout order; address them by workspaceId, never by index.

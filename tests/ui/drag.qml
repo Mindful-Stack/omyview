@@ -41,7 +41,7 @@ TestCase {
         view.motion.scale = 0     // instant by default; timing tests set it to 1 themselves
         seed(view)
         view.open()
-        wait(350)
+        wait(400)      // past the 200 ms entrance and the 300 ms open-settle window, with slack
     }
     function cleanup() { view.close() }
     function tileOf(addr) {
