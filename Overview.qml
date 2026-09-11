@@ -498,6 +498,7 @@ Item {
         targetScreen = focusedScreen(); selectedIndex = -1; opened = true
         _showVisuals(true)                         // before the first rebuild: layout motion is gated on it
         rebuild()          // instant paint from current data
+        flick.contentX = 0; flick.contentY = 0   // fresh scroll every open (kept-loaded state would otherwise leak the last offset)
         ensureSelectedVisible()
         scheduleRebuild()  // then settle as fresh toplevel geometry lands
         Qt.callLater(function () { keyCatcher.forceActiveFocus() })
@@ -505,8 +506,9 @@ Item {
     function close() {
         if (!opened) return                        // a click on the scrim mid-fade is not a second close
         endDrag()
-        // Every dispatched operation is atomic in the compositor; the reconcile timer only
-        // clears optimistic state.
+        // settleTimer is open-only; reconcileTimer keeps running (bounded by the 1.8 s
+        // deadlines): a floating cross-workspace drop still needs its positioning phase after
+        // the transfer is acknowledged, and with keepLoaded the component is alive to finish it.
         settleTimer.stop()
         opened = false                             // releases keyboard focus at once (see panel)
         _showVisuals(false)                        // the window unmaps when card.opacity reaches 0

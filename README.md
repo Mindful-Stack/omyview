@@ -28,7 +28,7 @@ removed `walker`.
   and re-themes automatically.
 - **Zero idle cost.** The component stays loaded with the shell so open and close can animate,
   but nothing runs until you summon it: captures start when the surface is mapped and stop when
-  it hides.
+  it hides (only the config-file watcher and one `hyprctl` probe at startup run before that).
 
 ---
 

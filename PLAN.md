@@ -36,8 +36,11 @@ for keyboard selection. Data from `Quickshell.Hyprland` (`Hyprland.workspaces`,
   `omarchy-shell shell rescanPlugins` reloads the plugin *registry/manifest* but NOT the
   live QML component, and the "save auto-reloads" behavior did not fire reliably here — so
   after editing `Overview.qml`, run `omarchy restart shell` and re-open to see the change.
-  (`keepLoaded: false` in the manifest is still correct — no cross-summon state — but it
-  does not by itself make source edits hot-reload.) Note the shell drives `open()`/`close()`
+  (The manifest now sets `keepLoaded: true` — the exit fade and the reconcile tail's
+  positioning phase of a floating cross-workspace drop both need the component alive after
+  `close()` — so cross-summon state does exist now: `tilesModel`/`boxesModel` and the
+  Flickable's scroll position survive between summons, reconciled at the next `open()`. Either
+  way, `keepLoaded` does not by itself make source edits hot-reload.) Note the shell drives `open()`/`close()`
   on the item via its per-plugin Loader (summon/hide); it does **not** call the plugin's own
   `toggle()` (that fn is effectively unused via IPC).
 - If the overlay doesn't appear / shell misbehaves, check load errors: `journalctl --user -o cat -n 60 $(systemctl --user list-units 'omarchy-shell*' -q >/dev/null 2>&1 && echo -u omarchy-shell*)` — or run the shell in a terminal to see stderr. (Confirm the shell's real unit/log path in Task 1.)
