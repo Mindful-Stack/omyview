@@ -9,6 +9,7 @@ TestCase {
     property var view
     property var mon
     Component { id: overview; Overview {} }
+    SignalSpy { id: tileDataSpy; signalName: "dataChanged" }   // target assigned in the test that needs it
 
     // One monitor at origin (0,1440) like drag.qml; workspaces 1..3 with named windows:
     //   ws1: 0xA class "chromium" title "Slack alternatives - Chromium"
@@ -479,6 +480,7 @@ TestCase {
         keyClick(Qt.Key_Escape)
         wait(40)
         verify(ring.opacity > 0, "ring fades out rather than vanishing")
+        verify(ring.visible, "ring stays visible while it fades out")
         tryVerify(function () { return ring.opacity === 0 }, 500)
         compare(ring.visible, false)
     }
@@ -492,16 +494,31 @@ TestCase {
         keyClick(Qt.Key_Escape)
         compare(view.testCard.hintSpace, 0)
     }
+    // Distinguishes: a card that changes height when the bar swaps in for the hint row.
+    function test_bar_swap_does_not_resize_the_card() {
+        var before = view.testCard.hintSpace
+        verify(before > 0)
+        type("s")
+        compare(view.testCard.hintSpace, before, "same height budget for hints and bar")
+        keyClick(Qt.Key_Escape)
+        compare(view.testCard.hintSpace, before)
+    }
     // Task 4 review carry-forward: applyTiles' update-branch row must never carry
     // matched/selectedMatch, or every settle tick would `set` them false-then-true again and
     // restart the fade Behaviors even though nothing about the match changed.
+    // Distinguishes: the mutant (roles added to the update-branch row) flips each row
+    // false→true within one rebuild — invisible to the animation (both writes land in the
+    // same JS turn, before Qt renders a frame), but visible as an extra ListModel write.
     function test_settle_tick_does_not_restart_match_animations() {
         view.motion.scale = 1
         type("slack")
         var tile = tileOf("0xB"), ring = childNamed(tile, "matchOutline")
         tryVerify(function () { return ring.opacity === 1 }, 500)
         var tileOpacityBefore = tile.opacity
+        tileDataSpy.target = view.testModel
+        tileDataSpy.clear()
         view.rebuild()
+        compare(tileDataSpy.count, 0, "an unchanged settle tick must not write any tile role")
         compare(ring.opacity, 1, "an unchanged settle tick must not restart the fade")
         compare(tile.opacity, tileOpacityBefore, "tile opacity must not be disturbed either")
     }

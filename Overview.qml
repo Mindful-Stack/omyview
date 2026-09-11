@@ -748,10 +748,12 @@ Item {
             opacity: 0        // the entrance brings it in; panel.visible follows this
             readonly property int pad: Math.round(Style.space(12))
             // Space under the grid for the key hints or, while a query is active, the find
-            // bar. Zero when hints are off and no query is active; the bar is never suppressed.
+            // bar. Reserves the larger of the two whenever either could show, so swapping one
+            // for the other on the first keystroke never resizes the card by the few pixels
+            // their implicitHeights happen to differ by. Zero only when both are absent.
             readonly property bool findActive: root.query.length > 0
             readonly property real hintSpace:
-                findActive ? findBar.implicitHeight + 8 : (config.hint ? hint.implicitHeight + 8 : 0)
+                (findActive || config.hint) ? Math.max(findBar.implicitHeight, hint.implicitHeight) + 8 : 0
             // Cap the card to the screen so the Flickable viewport can be smaller than the
             // content (`availCanvasW` already keeps canvas width <= this, minus the degenerate
             // narrow-screen case, which is expected to 2-D scroll per the spec).
@@ -950,7 +952,7 @@ Item {
                             title: model.title
                             matched: model.matched
                             selectedMatch: model.selectedMatch
-                            dimmed: root.query.length > 0 && !model.matched
+                            dimmed: root.query.length > 0 && !model.matched && root.dropTargetAddress !== model.address
                             accent: root.accent
                             dragging: root.draggingAddress === model.address
                             handle: root.handleByAddress[model.address] || null
