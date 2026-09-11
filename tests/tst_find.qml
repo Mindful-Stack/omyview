@@ -101,6 +101,7 @@ TestCase {
         compare(Logic.appendQueryText("ab", "\t"), "ab")
         compare(Logic.appendQueryText("ab", "\x7f"), "ab")
         compare(Logic.appendQueryText("ab", ""), "ab")
+        compare(Logic.appendQueryText("ab", "x\b"), "ab")
     }
     // Distinguishes: space starting a query (spec: space never starts one) vs space inside one.
     function test_space_only_inside_a_query() {
@@ -114,5 +115,6 @@ TestCase {
         compare(Logic.appendQueryText("s", "2"), "s2")
         compare(Logic.appendQueryText("s", "-"), "s-")
         compare(Logic.appendQueryText("s", "å"), "så")
+        compare(Logic.appendQueryText("", "日本"), "日本")
     }
 }
