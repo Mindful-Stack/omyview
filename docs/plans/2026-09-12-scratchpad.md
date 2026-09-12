@@ -334,7 +334,7 @@ band. The show chunk toggles the scratchpad only when it is not already up."
 
 ## Task 2: Overview wiring — input remap, toggle, keys, labels, chips — with the UI fixture
 
-This task builds `tests/ui/scratchpad.qml`, the fixture every later scratchpad assertion runs through. It must genuinely reproduce: a special workspace **identified by name with a non--98 id** (so id independence is real, not assumed), windows on it that carry the remapped id, and the row's absence by default. The fixture cannot supply Hyprland's own special-id allocation; it records the seeded id in `SCRATCH_HYPR_ID` so tests reason about it explicitly. It must not collapse "the scratchpad" and "a normal workspace" — the special row is keyed by `name`, never by the sign of the id, because a test that treats any negative id as the scratchpad would pass on a fixture where the two were wrongly identical.
+This task builds `tests/ui/scratchpad.qml`, the fixture every later scratchpad assertion runs through. It must genuinely reproduce: a special workspace **identified by name with a non--98 id** (so id independence is real, not assumed), windows on it that carry the remapped id, and the row's absence by default. The fixture cannot supply Hyprland's own special-id allocation; it records the seeded id in `scratchHyprId` so tests reason about it explicitly. It must not collapse "the scratchpad" and "a normal workspace" — the special row is keyed by `name`, never by the sign of the id, because a test that treats any negative id as the scratchpad would pass on a fixture where the two were wrongly identical.
 
 **Files:**
 - Modify: `Overview.qml` — `buildInput()`, new `scratchpadShown` + `toggleScratchpad()`, `open()`, `jump()`, the chord branch of `Keys.onPressed`, `wsLabel()`, `applyBoxes` row, the sentinel checks (`rebuild` keepId, `restorePreQuerySelection`, Enter, drop release), the backdrop and chip repeaters, the hint model
@@ -371,7 +371,7 @@ TestCase {
     property var mon
     // Hyprland allocates special ids dynamically; the fixture deliberately uses one that is NOT
     // -98 (the id on the dev machine) so every assertion on -2 proves the remap, not a coincidence.
-    readonly property int SCRATCH_HYPR_ID: -73
+    readonly property int scratchHyprId: -73   // lowercase: QML property names cannot start with a capital
     Component { id: overview; Overview {} }
 
     function client(addr, cls, title, x, floating) {
@@ -392,7 +392,7 @@ TestCase {
         var rows = [ wsRow(1, [client("0xA", "chromium", "Chromium", 100, false)]),
                      wsRow(2, [client("0xB", "Slack", "Slack", 100, true)]) ]
         if (withScratch !== false)
-            rows.push(wsRow(SCRATCH_HYPR_ID, [client("0xS", "Bitwarden", "Bitwarden", 900, true)], "special:scratchpad"))
+            rows.push(wsRow(scratchHyprId, [client("0xS", "Bitwarden", "Bitwarden", 900, true)], "special:scratchpad"))
         v.compositor.workspaces = { values: rows }
     }
     function init() {
@@ -419,10 +419,10 @@ TestCase {
     // Distinguishes: the special workspace leaking into the layout by default (the pre-feature
     // exclusion broken), and a row keyed on Hyprland's id instead of the constant.
     function test_hidden_by_default_and_shown_by_ctrl_s_with_the_constant_id() {
-        compare(boxOf(-2), null); compare(boxOf(SCRATCH_HYPR_ID), null); compare(row("0xS"), null)
+        compare(boxOf(-2), null); compare(boxOf(scratchHyprId), null); compare(row("0xS"), null)
         ctrlS()
         verify(boxOf(-2) !== null, "the scratchpad box uses the constant id")
-        compare(boxOf(SCRATCH_HYPR_ID), null, "Hyprland's id never reaches the layout")
+        compare(boxOf(scratchHyprId), null, "Hyprland's id never reaches the layout")
         compare(boxOf(-2).special, "scratchpad")
         verify(row("0xS") !== null); compare(row("0xS").wsid, -2)
         ctrlS()
@@ -513,16 +513,18 @@ Add after `property var _windows: []` (find state block):
     // Scratchpad row (docs/specs/2026-09-12-scratchpad-design.md): shown on demand for this
     // summon only. buildInput() remaps Hyprland's dynamic special id onto Logic.SCRATCHPAD_ID.
     property bool scratchpadShown: false
+    // Hide the row (toggle-off and every open()). A drop into the scratchpad still unacknowledged
+    // must go with it: a window on a hidden scratchpad is not in the input, so nothing could
+    // acknowledge it and applyTiles would keep the optimistic tile until the deadline. The next
+    // rebuild removes the row, or returns the tile to its authoritative place if the move has
+    // not landed yet.
+    function hideScratchpad() {
+        scratchpadShown = false
+        for (var a in pendingMoves)
+            if (pendingMoves[a].workspaceId === Logic.SCRATCHPAD_ID) delete pendingMoves[a]
+    }
     function toggleScratchpad() {
-        scratchpadShown = !scratchpadShown
-        if (!scratchpadShown) {
-            // A drop into the scratchpad still unacknowledged: a window on a hidden scratchpad
-            // is not in the input, so nothing could acknowledge it and applyTiles would keep the
-            // optimistic tile until the deadline. Drop the pending state; the rebuild removes
-            // the row (or returns the tile to its authoritative place if the move has not landed).
-            for (var a in pendingMoves)
-                if (pendingMoves[a].workspaceId === Logic.SCRATCHPAD_ID) delete pendingMoves[a]
-        }
+        if (scratchpadShown) hideScratchpad(); else scratchpadShown = true
         rebuild()
     }
 ```
@@ -566,7 +568,7 @@ Rewrite the workspace loop in `buildInput()`:
 ```
 (delete the old `var focusedMonitorName = …` line that followed the loop; keep the rest of the return unchanged.)
 
-In `open()`, on the line `targetScreen = focusedScreen(); selectedIndex = -1; opened = true` add `scratchpadShown = false` before `selectedIndex = -1`.
+In `open()`, on the line `targetScreen = focusedScreen(); selectedIndex = -1; opened = true` insert `hideScratchpad();` before `selectedIndex = -1` — the same cleanup as toggle-off, so a close/reopen during a pending drop cannot leave the optimistic tile behind either (the first `rebuild()` in `open()` then runs with the row hidden and no pending state).
 
 Property: `haveScratch` must be set only for the **named** special workspace; the unnamed `special` (share popups) or any other special stays excluded, and the fixture's `-73` id proves the remap because nothing downstream ever sees it.
 
@@ -736,6 +738,19 @@ Add to `tests/ui/scratchpad.qml`:
         ctrlS()
         compare(row("0xA").wsid, -2)
     }
+    // Distinguishes: open() resetting scratchpadShown without the pending cleanup — a drop into
+    // the scratchpad, then close and reopen before acknowledgement, would keep the optimistic
+    // tile (applyTiles retains pending rows) on a hidden row.
+    function test_close_and_reopen_during_a_pending_drop_leaves_no_orphan() {
+        ctrlS()
+        dragOntoScratchpad("0xA")
+        compare(row("0xA").wsid, -2)
+        view.close(); wait(50); view.open(); wait(400)
+        compare(view.scratchpadShown, false)
+        compare(view.pendingMoves["0xA"], undefined, "pending state dropped on reopen")
+        compare(row("0xA").wsid, 1, "back on its authoritative workspace")
+        compare(boxOf(-2), null)
+    }
     // Distinguishes: a scratchpad tile that cannot be dragged out, or a drag out that dispatches
     // to the scratchpad instead of the numeric target.
     function test_dragging_a_scratchpad_window_out_uses_the_numeric_target() {
@@ -845,7 +860,7 @@ Spec: docs/specs/2026-09-12-scratchpad-design.md · Plan: docs/plans/2026-09-12-
 
 Tests: Tier 1 layout/helper cases, Lua behaviour cases for the show chunk and the named floating
 move, `tests/ui/scratchpad.qml` (toggle, reopen, Enter/click, empty row, find, digits, labels,
-drops, pending-drop reconciliation and hide-during-pending). Live-checked on the dev machine.
+drops, pending-drop reconciliation, hide-during-pending and close/reopen-during-pending). Live-checked on the dev machine.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
@@ -861,5 +876,5 @@ Then `gh pr checks <n> --repo Mindful-Stack/omyview` until CI finishes — CI ru
 
 - **Spec coverage:** decisions/behaviour table → Tasks 2–3 (Ctrl+S, digits, arrows via existing navigation, Enter/click via `jump`, tile click unchanged, drops, drag out, open reset); show chunk → Task 1 (+ Lua cases); layout and data (remap, synthetic row, trailing group, labels, tiles) → Tasks 1–2; sentinel audit → Task 2 Step 5 and Task 3 Step 3; visuals (chip, badge/numeral via `wsLabel`, hint) → Task 2 Step 6; edge cases (query + toggle → Task 2 find test; hide during pending drop → Task 3; docked height → Task 1 layout test; fixture id → Task 2 seed) ; tests section → Tasks 1–3.
 - **Would-it-fail:** each UI test names the failure it catches; the id-independence tests use -73 so a -98 assumption cannot pass by coincidence; the "already up" Lua case asserts an empty dispatch log, which an unconditional toggle breaks.
-- **Type consistency:** `SCRATCHPAD_ID`, `SCRATCHPAD_NAME`, `isScratchpad`, `hasWs`, `wsSelector`, `scratchpadShowLua`, `scratchpadShown`, `toggleScratchpad`, `multiMonitor`, `hintKeys`, aliases `testHintModel`/`testBoxes`, box/group field `special`, input window field `special`.
+- **Type consistency:** `SCRATCHPAD_ID`, `SCRATCHPAD_NAME`, `isScratchpad`, `hasWs`, `wsSelector`, `scratchpadShowLua`, `scratchpadShown`, `hideScratchpad`, `toggleScratchpad`, fixture `scratchHyprId`, `multiMonitor`, `hintKeys`, aliases `testHintModel`/`testBoxes`, box/group field `special`, input window field `special`.
 - **Spec conflicts:** none; the spec already states the constant-id remap, tiled-preserving drops and the hide-clears-pending rule.

@@ -135,7 +135,7 @@ workspace". After this change:
 - **Hiding the row with a drop into it still unacknowledged.** `applyTiles` keeps rows with a
   pending move, but a window on a hidden scratchpad is not in `buildInput()`, so nothing could
   acknowledge it and the optimistic tile would sit on the canvas until the 1.8 s deadline.
-  Hiding the row therefore clears every `pendingMoves` / `pendingFullscreen` entry whose target
+  Hiding the row — by Ctrl+S or by `open()`'s reset, one shared `hideScratchpad()` — therefore clears every `pendingMoves` entry whose target
   is `SCRATCHPAD_ID` before the rebuild, so `applyTiles` removes those rows at once. Showing the
   row again rebuilds from compositor data, so the window reappears in the scratchpad once
   Hyprland has moved it. The reverse case (a scratchpad tile dropped onto a workspace, then the
