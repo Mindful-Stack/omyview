@@ -218,9 +218,28 @@ TestCase {
         compare(view.selectedMatchAddress, "0xB", "wraps to the first")
         keyClick(Qt.Key_Backtab, Qt.ShiftModifier)
         compare(view.selectedMatchAddress, "0xA", "Shift+Tab goes back")
-        keyClick(Qt.Key_Down)
-        compare(view.selectedMatchAddress, "0xB", "arrows cycle too while a query is active")
+        keyClick(Qt.Key_Right)                          // spatial: from ws 1 the match to the right is ws 2
+        compare(view.selectedMatchAddress, "0xB", "arrows move spatially among matches")
         compare(row("0xB").selectedMatch, true); compare(row("0xA").selectedMatch, false)
+    }
+    // Distinguishes: arrows cycling by rank while a query is active (Down from ws 1 would land on
+    // the next-ranked match, ws 2, instead of the box below, ws 6), and unrestricted spatial
+    // navigation (Right from ws 2 would land on the non-matching ws 3). Matches on 1, 2, 6 only.
+    function test_arrows_navigate_spatially_among_matching_workspaces() {
+        var rows = []
+        for (var i = 1; i <= 7; i++)
+            rows.push(wsRow(i, (i === 1 || i === 2 || i === 6) ? [client("0x" + i, "w" + i, "", 100)] : []))
+        view.compositor.workspaces.values = rows
+        view.rebuild()
+        type("w")                                       // ranked by input order: ws 1, 2, 6
+        compare(view.selectedId, 1)
+        keyClick(Qt.Key_Down);  compare(view.selectedId, 6, "Down from 1 is the box below, as without a query")
+        keyClick(Qt.Key_Up);    compare(view.selectedId, 1)
+        keyClick(Qt.Key_Right); compare(view.selectedId, 2)
+        keyClick(Qt.Key_Right); compare(view.selectedId, 2, "nothing matching to the right: stay")
+        keyClick(Qt.Key_Down);  compare(view.selectedId, 6, "nearest matching box below")
+        compare(view.selectedMatchAddress, "0x6")
+        keyClick(Qt.Key_Tab);   compare(view.selectedId, 1, "Tab still cycles by rank (wraps)")
     }
     // Distinguishes: the pre-fix rule "keep the selected address if it still matches" on a
     // query EDIT. Seed: "sa" (0xP) and "xsa" (0xQ). For "s" 0xP ranks first (word start);
@@ -489,8 +508,8 @@ TestCase {
         verify(tagged > q.contentWidth * 1.5, "tags are drawn, not interpreted")
     }
     // Distinguishes: a bar sized from an unconstrained text row (a long query would push the
-    // count outside the card and drift it with the centred row). The count must stay pinned
-    // to the bar's right edge and the query must elide inside the remaining space.
+    // count outside the card). The centred group must stay inside the bar and the query must
+    // elide inside the space the glyph and count leave.
     //
     // Deviation from the brief: fuzzyScore()'s subsequence match requires needle.length <=
     // haystack.length (logic.js:688), and the fixture's shortest matched haystack is "Slack"
@@ -505,8 +524,10 @@ TestCase {
         var bar = view.testBar, q = childNamed(bar, "findQuery"), c = childNamed(bar, "findCount")
         verify(bar.width <= view.testCard.width, "bar never wider than the card")
         verify(bar.width > 200, "fixture must be wide enough that the count could drift")
-        fuzzyCompare(c.x + c.width, bar.width, 0.5)
+        verify(c.x + c.width <= bar.width + 0.5, "count stays inside the bar")
         verify(q.x + q.width <= c.x + 0.5, "query stops before the count")
+        var g = childNamed(bar, "findGlyph")
+        fuzzyCompare((g.x + c.x + c.width) / 2, bar.width / 2, 1.5)   // the group is centred
         verify(q.truncated, "query is elided, not overflowing")
         verify(q.contentWidth <= q.width + 0.5)
         compare(c.text, "0 matches")   // count reads fully, unaffected by the query length

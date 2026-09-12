@@ -216,6 +216,18 @@ Item {
         applyMatchRoles()
         followMatch(changed)
     }
+    // Arrows with a query: the normal spatial rule, restricted to workspaces that hold a match.
+    function navigateMatch(dir) {
+        if (!matches.length) return
+        var ws = []
+        for (var i = 0; i < matches.length; i++) {
+            var win = _windowByAddress[matches[i].address]
+            ws.push(win ? win.workspaceId : -1)
+        }
+        matchIndex = Logic.navigateMatches(boxes, ws, matchIndex, dir)
+        applyMatchRoles()
+        followMatch()
+    }
     function cycleMatch(step) {
         if (!matches.length) return
         var i = matchIndex < 0 ? 0 : matchIndex
@@ -802,8 +814,12 @@ Item {
                         return
                     }
                     if (finding) {
-                        if (e.key === Qt.Key_Down || e.key === Qt.Key_Right || e.key === Qt.Key_Tab) { root.cycleMatch(1); return }
-                        if (e.key === Qt.Key_Up || e.key === Qt.Key_Left || e.key === Qt.Key_Backtab) { root.cycleMatch(-1); return }
+                        if (e.key === Qt.Key_Tab) { root.cycleMatch(1); return }
+                        if (e.key === Qt.Key_Backtab) { root.cycleMatch(-1); return }
+                        if (e.key === Qt.Key_Left) { root.navigateMatch("left"); return }
+                        if (e.key === Qt.Key_Right) { root.navigateMatch("right"); return }
+                        if (e.key === Qt.Key_Up) { root.navigateMatch("up"); return }
+                        if (e.key === Qt.Key_Down) { root.navigateMatch("down"); return }
                     } else {
                         if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) { root.jump(e.key - Qt.Key_0); return }
                         if (e.key === Qt.Key_0) { root.jump(10); return }

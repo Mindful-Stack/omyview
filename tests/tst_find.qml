@@ -117,4 +117,40 @@ TestCase {
         compare(Logic.appendQueryText("s", "å"), "så")
         compare(Logic.appendQueryText("", "日本"), "日本")
     }
+
+    // navigateMatches: a 5-column grid, two rows (ws 1..10), 100x60 boxes at a 110/70 pitch.
+    function grid() {
+        var out = []
+        for (var i = 0; i < 10; i++)
+            out.push({ workspaceId: i + 1, x: (i % 5) * 110, y: Math.floor(i / 5) * 70, w: 100, h: 60 })
+        return out
+    }
+    // Distinguishes: rank cycling on arrows (Right from ws 2 would go to the next-ranked match
+    // regardless of position) and unrestricted spatial navigation (Right from 2 would land on
+    // the non-matching ws 3). Matches ranked: ws 2, ws 4, ws 9, ws 6.
+    function test_navigate_matches_moves_spatially_among_matching_workspaces() {
+        var ws = [2, 4, 9, 6]
+        compare(Logic.navigateMatches(grid(), ws, 0, "right"), 1)   // 2 -> 4 (skips 3)
+        compare(Logic.navigateMatches(grid(), ws, 1, "right"), 1)   // nothing matching to the right of 4
+        compare(Logic.navigateMatches(grid(), ws, 1, "down"), 2)    // 4 -> 9 (directly below), not 6
+    }
+    // Distinguishes: "down" picking the next match by rank instead of the box below.
+    function test_navigate_matches_down_from_first_column_lands_on_the_box_below() {
+        var ws = [1, 2, 6]                                          // ranked: 1, 2, 6
+        compare(Logic.navigateMatches(grid(), ws, 0, "down"), 2)    // 1 -> 6, not 2
+        compare(Logic.navigateMatches(grid(), ws, 0, "right"), 1)   // 1 -> 2
+        compare(Logic.navigateMatches(grid(), ws, 2, "up"), 0)      // 6 -> 1
+    }
+    // Distinguishes: landing on the wrong match when a workspace holds several — the target
+    // workspace's best-ranked match must be selected. Ranked: ws 3 (a), ws 1 (b), ws 3 (c).
+    function test_navigate_matches_selects_the_best_ranked_match_on_the_target() {
+        var ws = [3, 1, 3]
+        compare(Logic.navigateMatches(grid(), ws, 1, "right"), 0)   // from ws 1 to ws 3: rank 0, not rank 2
+    }
+    // Distinguishes: an out-of-range or missing current selection blowing up.
+    function test_navigate_matches_edge_cases() {
+        compare(Logic.navigateMatches(grid(), [], -1, "right"), -1)
+        compare(Logic.navigateMatches(grid(), [7], -1, "right"), 0)  // no current: adopt the only candidate
+        compare(Logic.navigateMatches([], [7], 0, "right"), 0)
+    }
 }

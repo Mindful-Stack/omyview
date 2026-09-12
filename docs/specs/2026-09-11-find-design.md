@@ -30,8 +30,11 @@ future actions (scratchpad toggle, workspace lock) and are ignored by this featu
 - **Space never starts a query**; it appends once a query exists.
 - **Enter focuses the window** (`hl.dsp.focus({ window = "address:…" })`, the tile-click path),
   not just its workspace — a floating or covered match is raised too.
-- **Cycling is by rank**, not spatially: with a query, all four arrows and Tab/Shift+Tab step
-  through the ranked matches.
+- **Arrows stay spatial, Tab cycles by rank** (revised 2026-09-12 after live use). With a query,
+  the four arrows use the normal nearest-in-direction rule restricted to workspaces that hold a
+  match — Down from 1 lands on 6 if 6 has a match, Right from 2 skips a non-matching 3 — and
+  select the best-ranked match on the workspace they land on. Tab/Shift+Tab step through the
+  ranked list, wrapping. Rank-cycling on the arrows was tried first and felt arbitrary.
 - **The find bar replaces the hint row** at the bottom of the card; no card resize, no layout
   shift.
 
@@ -48,8 +51,8 @@ Keys, by whether `query` is empty:
 | Ctrl+Backspace            | nothing                             | clears the query                         |
 | Esc                       | close the overlay                   | clear the query                          |
 | Enter                     | jump to the selected workspace      | focus the selected match's window, close |
-| Down / Right / Tab        | spatial box navigation (Tab: none)  | next match by rank (wraps)               |
-| Up / Left / Shift+Tab     | spatial box navigation (Tab: none)  | previous match by rank (wraps)           |
+| Tab / Shift+Tab           | none                                | next / previous match by rank (wraps)    |
+| Up / Down / Left / Right  | spatial box navigation              | spatial, among workspaces with a match   |
 | Ctrl+letter               | ignored (reserved)                  | ignored (reserved)                       |
 
 "Printable" is a key event with non-empty `text` and no Ctrl/Alt/Meta modifier. Enter with a query
@@ -94,10 +97,11 @@ empty query.
   Non-matching tiles fade to 0.35 opacity. Both changes animate with `motion.fast` / `motion.hover`
   and are instant with motion off.
 - **Find bar.** The hint `Row` at the bottom of the card is replaced (same anchors, same height
-  budget) by a `FindBar` item spanning the card interior: a search glyph at the left, `n of m`
-  anchored at the right (`n` = selected rank 1-based, `m` = match count), and the query text
-  filling the space between, eliding at its *start* so the newest characters stay visible. A
-  long query never widens the bar or pushes the count out of the card. With the query empty the hint row returns,
+  budget) by a `FindBar` item spanning the card interior, showing one group centred where the
+  hints sit: a search glyph, the query text, and `n of m` (`n` = selected rank 1-based, `m` =
+  match count). The query takes its natural width, capped at what the glyph and count leave,
+  eliding at its *start* so the newest characters stay visible. A long query never widens the
+  bar or pushes the count out of the card. With the query empty the hint row returns,
   carrying one new hint `type · find`. If `config.hint` is off, the card reserves no hint space
   normally but grows by the bar height while a query is active — the bar is the only place the
   query is visible, so it is never suppressed.

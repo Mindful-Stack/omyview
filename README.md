@@ -30,8 +30,9 @@ removed `walker`.
 - **Fast selection.** Number keys jump (`1`–`9`, `0` = 10), arrow keys move the highlight +
   `Enter`, click a window to focus it, middle-click to close it. `Esc` or a click outside closes.
 - **Type to find:** any letter starts a fuzzy filter over window class and title; matches ring
-  in the accent colour, the best one is selected. `Tab`/`Shift+Tab` and the arrows cycle
-  matches, `Enter` focuses the selected window, `Esc` clears the query (a second `Esc` closes).
+  in the accent colour, the best one is selected. The arrows move between matching workspaces
+  the way they normally move between workspaces, `Tab`/`Shift+Tab` cycle matches by rank,
+  `Enter` focuses the selected window, `Esc` clears the query (a second `Esc` closes).
   Digits jump while the query is empty and type once it is not. Ctrl+letter chords are reserved.
 - **Theme-aware.** Pulls the active Omarchy theme's colors and fonts, so it matches the bar
   and re-themes automatically.
@@ -111,7 +112,8 @@ Press **SUPER+P**. The overlay opens on your focused monitor.
 | **Click an empty box**   | Jump to that workspace                                    |
 | **Click the ⛶ badge**    | Turn fullscreen off for that window (overview stays open) |
 | **Type a letter**        | Start a fuzzy find over window class and title             |
-| **Tab / Shift+Tab / arrows** (query active) | Cycle matches by rank                    |
+| **Tab / Shift+Tab** (query active) | Cycle matches by rank                             |
+| **↑ ↓ ← →** (query active)         | Move spatially among workspaces that hold a match |
 | **Enter** (query active) | Focus the selected match and close                        |
 | **Esc** (query active)   | Clear the query                                            |
 | **Esc / click-out**      | Close                                                     |

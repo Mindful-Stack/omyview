@@ -739,3 +739,22 @@ function appendQueryText(query, text) {
     if (!q.length && !t.trim().length) return q
     return q + t
 }
+
+// Arrow keys while a query is active: the same nearest-in-direction rule as `navigate`, but only
+// over boxes whose workspace holds a match, so Right from ws 2 lands on ws 4 when 3 has no
+// match and Down from ws 1 lands on ws 6 like it does without a query. `matchWs[i]` is the
+// workspace id of the i-th ranked match; returns the match index to select — the best-ranked
+// match on the chosen workspace — or `current` when there is nowhere to go.
+function navigateMatches(boxes, matchWs, current, dir) {
+    var has = {}
+    for (var i = 0; i < matchWs.length; i++) has[matchWs[i]] = true
+    var cand = []
+    for (var b = 0; b < boxes.length; b++) if (has[boxes[b].workspaceId]) cand.push(boxes[b])
+    if (!cand.length) return current
+    var curWs = (current >= 0 && current < matchWs.length) ? matchWs[current] : -1
+    var ci = indexOfWorkspace(cand, curWs)
+    var ni = ci < 0 ? 0 : navigate(cand, ci, dir)
+    var ws = cand[ni].workspaceId
+    for (var m = 0; m < matchWs.length; m++) if (matchWs[m] === ws) return m
+    return current
+}
