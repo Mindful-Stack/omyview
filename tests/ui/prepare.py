@@ -31,6 +31,8 @@ qml = qml.replace('id: root', '''id: root
     property alias testEnterAnim: enterAnim
     property alias testKeys: keyCatcher
     property alias testBar: findBar
+    property alias testHintModel: hintKeys.model
+    property alias testBoxes: boxesModel
     property QtObject compositor: QtObject {
         property var monitors: ({values: []})
         property var workspaces: ({values: []})

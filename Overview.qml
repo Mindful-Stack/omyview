@@ -29,6 +29,24 @@ Item {
         (matchIndex >= 0 && matchIndex < matches.length) ? matches[matchIndex].address : ""
     property var _windows: []               // buildInput().windows, layout order, for re-ranking
 
+    // Scratchpad row (docs/specs/2026-09-12-scratchpad-design.md): shown on demand for this
+    // summon only. buildInput() remaps Hyprland's dynamic special id onto Logic.SCRATCHPAD_ID.
+    property bool scratchpadShown: false
+    // Hide the row (toggle-off and every open()). A drop into the scratchpad still unacknowledged
+    // must go with it: a window on a hidden scratchpad is not in the input, so nothing could
+    // acknowledge it and applyTiles would keep the optimistic tile until the deadline. The next
+    // rebuild removes the row, or returns the tile to its authoritative place if the move has
+    // not landed yet.
+    function hideScratchpad() {
+        scratchpadShown = false
+        for (var a in pendingMoves)
+            if (pendingMoves[a].workspaceId === Logic.SCRATCHPAD_ID) delete pendingMoves[a]
+    }
+    function toggleScratchpad() {
+        if (scratchpadShown) hideScratchpad(); else scratchpadShown = true
+        rebuild()
+    }
+
     // theme — tone steps, not lines (see docs/specs/2026-09-10-restyle-design.md)
     property color background: Color.menu.background
     property color foreground: Color.menu.text
@@ -52,7 +70,7 @@ Item {
         (0.299 * background.r + 0.587 * background.g + 0.114 * background.b) < 0.5
     // Badge chip: the card colour, nearly opaque, so the number reads over any preview.
     readonly property color badgeColor: Qt.rgba(background.r, background.g, background.b, 0.88)
-    function wsLabel(id) { return id === 10 ? "0" : String(id) }   // matches the 1–0 keys
+    function wsLabel(id) { return Logic.isScratchpad(id) ? "S" : id === 10 ? "0" : String(id) }   // matches the 1–0 keys
     // The card owns its radius: Style.cornerRadius mirrors Hyprland rounding, which may be 0.
     readonly property int boxRadius: 8
     readonly property int cardRadius: boxRadius + card.pad
@@ -106,6 +124,9 @@ Item {
     function monitorIcon(name) { return /^(eDP|LVDS|DSI)/i.test(name) ? "\u{F0322}" : "\u{F0379}" }
 
     property var groups: []
+    // Monitor chips and the focused-group backdrop key on how many *monitor* groups there are;
+    // the scratchpad group is extra and always carries its own chip.
+    readonly property bool multiMonitor: groups.filter(function (g) { return !g.special }).length > 1
     // Card interior logical width available to the canvas: panel.width (logical, not
     // screen.width*dpr) minus the card's own padding and a little breathing room.
     readonly property real availCanvasW: panel.width > 0 ? panel.width - 2 * card.pad - 16 : 1600
@@ -136,13 +157,21 @@ Item {
                         scale: m.scale, reserved: m.lastIpcObject ? m.lastIpcObject.reserved : [0,0,0,0],
                         transform: m.lastIpcObject ? m.lastIpcObject.transform : 0 })
         }
+        var focusedMonitorName = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
         var wss = [], hws = Hyprland.workspaces ? Hyprland.workspaces.values : []
         var focusedWsId = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
-        var wins = []
+        var wins = [], haveScratch = false
         for (var j = 0; j < hws.length; j++) {
-            var ws = hws[j]; if (!ws || ws.id < 0) continue
+            var ws = hws[j]; if (!ws) continue
+            var special = ""
+            if (ws.id < 0) {
+                // Special workspaces: only the scratchpad, only while shown, identified by name.
+                if (!scratchpadShown || ws.name !== Logic.SCRATCHPAD_NAME) continue
+                special = "scratchpad"; haveScratch = true
+            }
+            var wsId = special ? Logic.SCRATCHPAD_ID : ws.id
             var mon = ws.monitor
-            wss.push({ id: ws.id, monitorName: mon ? mon.name : "?",
+            wss.push({ id: wsId, monitorName: mon ? mon.name : (special ? focusedMonitorName : "?"), special: special,
                        focused: ws.id === focusedWsId,
                        occupied: ws.toplevels && ws.toplevels.values.length > 0 })
             var tls = ws.toplevels ? ws.toplevels.values : []
@@ -151,12 +180,15 @@ Item {
                 if (!o || !o.at || !o.size || !o.address) continue
                 wins.push({ address: o.address, cls: o["class"] || "", title: o.title || "",
                             ax: o.at[0], ay: o.at[1], sw: o.size[0], sh: o.size[1],
-                            workspaceId: ws.id, floating: !!o.floating,
+                            workspaceId: wsId, special: special, floating: !!o.floating,
                             fullscreen: Logic.fullscreenMode(o),
                             grouped: !!(o.grouped && o.grouped.length) })
             }
         }
-        var focusedMonitorName = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
+        // Hyprland drops an emptied special workspace; the row is still a place to drop windows.
+        if (scratchpadShown && !haveScratch)
+            wss.push({ id: Logic.SCRATCHPAD_ID, monitorName: focusedMonitorName, special: "scratchpad",
+                       focused: false, occupied: false })
         return { monitors: mons,
                  workspaces: Logic.padWorkspaces(wss, config.workspaces, focusedMonitorName),
                  windows: wins, focusedMonitorName: focusedMonitorName,
@@ -270,7 +302,7 @@ Item {
     // then the first box. Deliberately not rebuild()'s nearest-position rule — after a search
     // there is no positional expectation to preserve.
     function restorePreQuerySelection() {
-        var idx = preQuerySelectedId >= 0 ? Logic.indexOfWorkspace(boxes, preQuerySelectedId) : -1
+        var idx = Logic.hasWs(preQuerySelectedId) ? Logic.indexOfWorkspace(boxes, preQuerySelectedId) : -1
         if (idx < 0) for (var b = 0; b < boxes.length; b++) if (boxes[b].focused) { idx = b; break }
         if (idx < 0 && boxes.length) idx = 0
         preQuerySelectedId = -1
@@ -538,7 +570,7 @@ Item {
         for (var i = 0; i < boxes.length; i++) {
             var b = boxes[i]
             var row = { workspaceId: b.workspaceId, bx: b.x, by: b.y, bw: b.w, bh: b.h,
-                        focused: !!b.focused, occupied: !!b.occupied }
+                        focused: !!b.focused, occupied: !!b.occupied, special: b.special || "" }
             seen[b.workspaceId] = true
             var idx = boxIndex(b.workspaceId)
             if (idx < 0) boxesModel.append(row)
@@ -593,7 +625,7 @@ Item {
         applyTiles(res.tiles)
         // Selection follows the workspace, not its position: workspaces come and go while the
         // overview is open (a drag can empty and destroy one), shifting every later box.
-        var idx = keepId >= 0 ? Logic.indexOfWorkspace(res.boxes, keepId) : -1
+        var idx = Logic.hasWs(keepId) ? Logic.indexOfWorkspace(res.boxes, keepId) : -1
         if (idx < 0 && root.selectedIndex >= 0)   // selected workspace vanished: nearest position
             idx = res.boxes.length ? Math.min(root.selectedIndex, res.boxes.length - 1) : -1
         if (idx < 0 && res.boxes.length) {        // nothing selected yet: the focused workspace
@@ -621,7 +653,8 @@ Item {
         else if (b.x + b.w > flick.contentX + flick.width) flick.contentX = b.x + b.w - flick.width
     }
     function jump(id) {
-        if (id === undefined || id === null) return
+        if (!Logic.hasWs(id)) return
+        if (Logic.isScratchpad(id)) { Hyprland.dispatch(Logic.scratchpadShowLua()); root.close(); return }
         Hyprland.dispatch('hl.dsp.focus({ workspace = "' + id + '" })'); root.close()
     }
     function open() {
@@ -629,7 +662,7 @@ Item {
         openSettle.restart()                        // placement window: see layoutMotion
         if (typeof Hyprland.refreshMonitors === "function") Hyprland.refreshMonitors()
         config.probeMotion()                       // async; result lands for this or the next open
-        targetScreen = focusedScreen(); selectedIndex = -1; opened = true
+        targetScreen = focusedScreen(); hideScratchpad(); selectedIndex = -1; opened = true
         resetFind()
         _showVisuals(true)                         // before the first rebuild: layout motion is gated on it
         rebuild()          // instant paint from current data
@@ -801,6 +834,7 @@ Item {
                     // arrow does nothing.
                     if (chord) {
                         if (chord === Qt.ControlModifier && e.key === Qt.Key_Backspace && finding) root.setQuery("")
+                        else if (chord === Qt.ControlModifier && e.key === Qt.Key_S) root.toggleScratchpad()
                         return
                     }
                     if (e.key === Qt.Key_Escape) { if (finding) root.setQuery(""); else root.close(); return }
@@ -810,7 +844,7 @@ Item {
                     }
                     if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {
                         if (finding) root.acceptMatch()
-                        else if (root.selectedId >= 0) root.jump(root.selectedId)
+                        else if (Logic.hasWs(root.selectedId)) root.jump(root.selectedId)
                         return
                     }
                     if (finding) {
@@ -872,7 +906,7 @@ Item {
                     // Keyed on panel.visible like the chips, so it fades out with the card
                     // instead of popping out the moment close() drops `opened`.
                     Repeater {
-                        model: panel.visible && root.groups.length > 1 ? root.groups : []
+                        model: panel.visible && root.multiMonitor ? root.groups : []
                         Rectangle {
                             objectName: "groupBackdrop"
                             required property var modelData
@@ -931,14 +965,16 @@ Item {
                     // chip is accented and sits on the group backdrop. Shown only when the
                     // layout has more than one group (then each group carries a header band).
                     Repeater {
-                        model: panel.visible && root.groups.length > 1 ? root.groups : []
+                        model: panel.visible ? root.groups : []
                         Text {
                             objectName: "monitorChip"
                             required property var modelData
+                            visible: !!modelData.special || root.multiMonitor
                             x: modelData.x + modelData.inset + 4; y: modelData.y + modelData.inset
                             height: modelData.headerH
                             verticalAlignment: Text.AlignVCenter
-                            text: root.monitorIcon(modelData.monitorName) + "  " + modelData.monitorName
+                            text: modelData.special ? "SCRATCHPAD"
+                                                    : root.monitorIcon(modelData.monitorName) + "  " + modelData.monitorName
                             color: modelData.focused ? root.accent : root.foreground
                             opacity: modelData.focused ? 1.0 : 0.55
                             font.family: root.fontFamily
@@ -1066,7 +1102,7 @@ Item {
                                     var targetWs = root.dropTargetWs
                                     var dropX = windowTile.x, dropY = windowTile.y
                                     var ptr = root.dragPointer()
-                                    if (wasMoved && targetWs >= 0)
+                                    if (wasMoved && Logic.hasWs(targetWs))
                                         root.submitDrop(addr, targetWs, dropX, dropY, ptr.x, ptr.y)
                                     root.endDrag()
                                     if (!wasMoved) {
@@ -1173,8 +1209,10 @@ Item {
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 8 }
                 spacing: Math.round(Style.space(12))
                 Repeater {
+                    id: hintKeys
                     model: [ { k: "1–0", l: "jump" }, { k: "↑ ↓ ← →", l: "move" }, { k: "↵", l: "select" },
-                             { k: "drag", l: "move window" }, { k: "type", l: "find" }, { k: "esc", l: "close" } ]
+                             { k: "drag", l: "move window" }, { k: "type", l: "find" },
+                             { k: "ctrl+s", l: "scratchpad" }, { k: "esc", l: "close" } ]
                     Row {
                         required property var modelData
                         spacing: 5
