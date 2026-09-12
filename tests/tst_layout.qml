@@ -849,6 +849,7 @@ TestCase {
         compare(Logic.wsSelector(Logic.SCRATCHPAD_ID), "special:scratchpad")
         compare(Logic.wsSelector(3), "3")
         verify(Logic.isScratchpad(Logic.SCRATCHPAD_ID)); verify(!Logic.isScratchpad(2)); verify(!Logic.isScratchpad(-1))
+        compare(Logic.wsSelector(undefined), ""); compare(Logic.wsSelector(NaN), "")
     }
     // Distinguishes: floatingMoveLua emitting a numeric target for the scratchpad ("-2" is not a
     // workspace Hyprland knows) or comparing "same workspace" by id.
