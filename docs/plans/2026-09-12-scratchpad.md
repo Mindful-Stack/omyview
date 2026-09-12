@@ -352,7 +352,7 @@ cp "$src/tests/ui/scratchpad.qml" "$fixture/tst_scratchpad_ui.qml"
     property alias testHintModel: hintKeys.model
     property alias testBoxes: boxesModel
 ```
-(`hintKeys` is the id Step 6 gives the hint Repeater.)
+(`hintKeys` is the id Step 6 gives the hint Repeater — so also add `id: hintKeys` to the hint `Repeater` in `Overview.qml` NOW, or the fixture's `Overview.qml` will not compile and every UI test, not just the new ones, fails at the Step 3 checkpoint.)
 
 - [ ] **Step 2: Write the failing UI tests**
 
