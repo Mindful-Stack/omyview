@@ -177,8 +177,110 @@ TestCase {
         compare(shown.length, 1, "only the scratchpad chip is visible with one monitor")
         compare(shown[0].text, "SCRATCHPAD")
     }
-    // Distinguishes: a card narrower than its hint row (six entries spill onto the scrim).
+    // Distinguishes: a card narrower than its hint row (seven entries spill onto the scrim).
     function test_card_is_at_least_as_wide_as_the_hint_row() {
         verify(view.testCard.width + 0.5 >= view.testHintRow.implicitWidth + 2 * view.testCard.pad)
+    }
+
+    function tileOf(addr) {
+        var ch = view.testCanvas.children
+        for (var i = 0; i < ch.length; i++) if (ch[i].model && ch[i].model.address === addr) return ch[i]
+        fail("no tile for " + addr)
+    }
+    // Press on a tile, hover the centre of the scratchpad box, optionally release there.
+    function dragOntoScratchpad(addr, release) {
+        var t = tileOf(addr), p = t.mapToItem(tc, t.width / 2, t.height / 2)
+        var b = boxOf(-2), goal = view.testCanvas.mapToItem(tc, b.x + b.w / 2, b.y + b.h / 2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x + 12, p.y + 2, 20)
+        mouseMove(tc, goal.x, goal.y, 20)
+        if (release !== false) mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        return goal
+    }
+    // Distinguishes: the tiled-insert plan being used for the scratchpad (an insertion half while
+    // hovering, a dwindle chunk on release) instead of the plain named move — and a move by id.
+    function test_tiled_drop_is_a_plain_named_move() {
+        ctrlS()
+        var goal = dragOntoScratchpad("0xA", false)
+        compare(view.dropTargetWs, -2)
+        compare(view.dropTargetAddress, "", "no insertion anchor over the scratchpad")
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        compare(view.compositor.commands.length, 1)
+        var cmd = view.compositor.commands[0]
+        verify(cmd.indexOf('workspace = "special:scratchpad"') >= 0, "named target, got: " + cmd)
+        verify(cmd.indexOf('follow = false') >= 0)
+        verify(cmd.indexOf('smart_split') < 0 && cmd.indexOf('cursor') < 0, "not the tiled-insert chunk")
+        verify(cmd.indexOf('window.float') < 0, "tiling state is preserved")
+        compare(row("0xA").wsid, -2, "optimistic tile sits in the row")
+    }
+    // Distinguishes: a floating drop losing its position, or naming the target by id.
+    function test_floating_drop_names_the_target_and_positions() {
+        ctrlS()
+        dragOntoScratchpad("0xB")
+        var cmd = view.compositor.commands[0]
+        verify(cmd.indexOf('workspace = "special:scratchpad"') >= 0)
+        verify(cmd.indexOf('x = "') >= 0, "positioned")
+        verify(cmd.indexOf('workspace.name == "special:scratchpad"') >= 0, "same-workspace test by name")
+    }
+    // Distinguishes: a pending drop never acknowledged because the compositor reports the window
+    // on Hyprland's own id (-73) while the pending target is -2 — the remap must reconcile them.
+    function test_pending_drop_is_acknowledged_on_hyprlands_own_id() {
+        ctrlS()
+        dragOntoScratchpad("0xA")
+        verify(view.pendingMoves["0xA"] !== undefined, "pending after the drop")
+        compare(view.pendingMoves["0xA"].workspaceId, -2)
+        // The compositor lands the window on the scratchpad (its id, its geometry).
+        var rows = view.compositor.workspaces.values
+        var win = rows[0].toplevels.values.shift().lastIpcObject
+        rows[2].toplevels.values.push({ lastIpcObject: win })
+        view.rebuild()
+        compare(view.pendingMoves["0xA"], undefined, "acknowledged")
+        compare(row("0xA").wsid, -2)
+    }
+    // Distinguishes: hiding the row before the compositor acknowledges the drop leaving the
+    // optimistic tile on the canvas (applyTiles keeps pending rows; nothing could acknowledge a
+    // window that is not in the input).
+    function test_hiding_the_row_during_a_pending_drop_leaves_no_orphan() {
+        ctrlS()
+        dragOntoScratchpad("0xA")
+        compare(row("0xA").wsid, -2)
+        ctrlS()                                            // hide before any acknowledgement
+        compare(view.pendingMoves["0xA"], undefined, "pending state dropped")
+        compare(row("0xA").wsid, 1, "back on its authoritative workspace (the move has not landed)")
+        // Now the move lands; showing the row again picks the window up from compositor data.
+        var rows = view.compositor.workspaces.values
+        var win = rows[0].toplevels.values.shift().lastIpcObject
+        rows[2].toplevels.values.push({ lastIpcObject: win })
+        view.rebuild()
+        compare(row("0xA"), null, "on a hidden scratchpad: not shown")
+        ctrlS()
+        compare(row("0xA").wsid, -2)
+    }
+    // Distinguishes: open() resetting scratchpadShown without the pending cleanup — a drop into
+    // the scratchpad, then close and reopen before acknowledgement, would keep the optimistic
+    // tile (applyTiles retains pending rows) on a hidden row.
+    function test_close_and_reopen_during_a_pending_drop_leaves_no_orphan() {
+        ctrlS()
+        dragOntoScratchpad("0xA")
+        compare(row("0xA").wsid, -2)
+        view.close(); wait(50); view.open(); wait(400)
+        compare(view.scratchpadShown, false)
+        compare(view.pendingMoves["0xA"], undefined, "pending state dropped on reopen")
+        compare(row("0xA").wsid, 1, "back on its authoritative workspace")
+        compare(boxOf(-2), null)
+    }
+    // Distinguishes: a scratchpad tile that cannot be dragged out, or a drag out that dispatches
+    // to the scratchpad instead of the numeric target.
+    function test_dragging_a_scratchpad_window_out_uses_the_numeric_target() {
+        ctrlS()
+        var t = tileOf("0xS"), p = t.mapToItem(tc, t.width / 2, t.height / 2)
+        var b = boxOf(2), goal = view.testCanvas.mapToItem(tc, b.x + b.w / 2, b.y + b.h / 2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x + 12, p.y + 2, 20)
+        mouseMove(tc, goal.x, goal.y, 20)
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        var cmd = view.compositor.commands[0]
+        verify(cmd.indexOf('workspace = "2"') >= 0, "numeric target, got: " + cmd)
+        verify(cmd.indexOf('special:scratchpad') < 0)
     }
 }

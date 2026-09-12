@@ -405,7 +405,7 @@ Item {
         if (!box || !mon || !win) return
         var sourceWs = win.workspaceId // model.wsid may still be optimistic
         var tile = tileRectFor(addr)
-        if (!win.floating && !win.grouped && tile) {
+        if (!win.floating && !win.grouped && tile && !Logic.isScratchpad(targetWs)) {
             var cx = px === undefined ? dropX + tile.w / 2 : px
             var cy = py === undefined ? dropY + tile.h / 2 : py
             if (startTiledInsert(addr, win, targetWs, box, mon, cx, cy, dropX, dropY)) {
@@ -435,8 +435,8 @@ Item {
         // Floating: transfer + exact position in one compositor-side chunk (nothing here has to
         // outlive the overlay to finish it). Grouped tiled windows only change workspace.
         if (pos) Hyprland.dispatch(Logic.floatingMoveLua(addr, targetWs, pos))
-        else Hyprland.dispatch('hl.dsp.window.move({ workspace = ' + targetWs +
-                               ', follow = false, window = "address:' + addr + '" })')
+        else Hyprland.dispatch('hl.dsp.window.move({ workspace = "' + Logic.wsSelector(targetWs) +
+                               '", follow = false, window = "address:' + addr + '" })')
         scheduleRebuild()
         reconcileTimer.restart()
     }
@@ -487,7 +487,8 @@ Item {
         var ws = Logic.hitWorkspace(boxes, cx, cy)
         dropTargetWs = ws === null ? -1 : ws
         var win = _windowByAddress[draggingAddress]
-        var tiledDrag = win && !win.floating && !win.grouped && ws !== null
+        // The scratchpad takes a plain move (no tiled anchor to split): never plan an insertion.
+        var tiledDrag = win && !win.floating && !win.grouped && ws !== null && !Logic.isScratchpad(ws)
         var plan = tiledDrag ? tiledDropPlan(draggingAddress, win, ws, cx, cy) : null
         dropTargetAddress = plan ? plan.anchor : ""
         dropTargetSide = plan ? plan.side : ""
@@ -810,7 +811,7 @@ Item {
             readonly property real maxCardW: panel.width > 0 ? panel.width - 16 : 1616
             readonly property real maxCardH: panel.height > 0 ? panel.height - 64 : 900
             // The hint row never widens past the screen (maxCardW still caps it), but it does
-            // widen a narrow card: a layout with few/narrow workspaces must not clip the six
+            // widen a narrow card: a layout with few/narrow workspaces must not clip the seven
             // key hints against the card edge.
             implicitWidth: Math.min(Math.max(canvas.implicitWidth, config.hint ? hint.implicitWidth : 0) + pad * 2, maxCardW)
             implicitHeight: Math.min(canvas.implicitHeight + pad * 2 + hintSpace, maxCardH)
