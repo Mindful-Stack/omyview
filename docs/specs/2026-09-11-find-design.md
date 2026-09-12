@@ -126,9 +126,11 @@ they choose the selection differently:
   selects the new 4th, removing the last selects the new last, removing the sole match gives -1).
   With no matches left the box selection stays where the frame already is.
 
-Both then update the tile roles `matched` and `selectedMatch` via `setTileRoles`, move
-`selectedIndex` to the selected match's box, and call `ensureSelectedVisible()`. Cycling
-(arrows/Tab) changes `matchIndex` only and does the same two steps. Enter dispatches
+Both then update the tile roles `matched` and `selectedMatch` in one diff-guarded pass over the
+model (`applyMatchRoles`), move `selectedIndex` to the selected match's box, and scroll it into
+view. A background rebuild that keeps the same match scrolls only if that match changed box (the
+window moved workspace); a same-match settle tick never scrolls. Cycling (arrows/Tab) changes
+`matchIndex` only and does the same two steps. Enter dispatches
 `hl.dsp.focus({ window = "address:<addr>" })` and `root.close()` — the same two lines the tile
 click uses.
 
@@ -152,9 +154,10 @@ inputs; no key handling, no focus. The key catcher remains the single focus item
 
 - **Tier 1, `tests/tst_find.qml`**: `findMatches` — subsequence and non-match, case-insensitivity,
   consecutive and word-start bonuses, class bonus over title, shorter-haystack tie-break, stable
-  order for equal scores, empty query → empty result, special-workspace windows never present
-  (input contract).
-- **Tier 1, offscreen UI (`tests/ui/`)**: typing through the key catcher sets `matched` /
+  order for equal scores, empty query → empty result, best alignment over first occurrence, capped
+  length penalty; `appendQueryText` — control characters, space, printable and multi-char text.
+- **Tier 1, offscreen UI (`tests/ui/`)**: special-workspace windows never reach the match list
+  (a `buildInput()` contract, with a positive control); typing through the key catcher sets `matched` /
   `selectedMatch` roles and the bar text; Tab cycles; Esc clears the query and restores the box
   selection; a second Esc closes; a digit jumps with an empty query and appends with a query.
   Selection rules: a query edit that changes rank 1 moves the selection to the new rank 1 even
