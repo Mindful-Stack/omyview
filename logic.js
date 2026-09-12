@@ -662,3 +662,99 @@ function parseConfig(raw) {
         motion: (o.motion === "full" || o.motion === "off") ? o.motion : "auto"
     }
 }
+
+// ---- Find (docs/specs/2026-09-11-find-design.md) ----------------------------------------
+// Fuzzy subsequence ranking over class and title. Pure: the Overview hands in the window list
+// `buildInput()` produced (special workspaces already excluded) in layout order, and gets back
+// `[{ address, score }]`, best first. Equal scores keep input order, so the ranking never
+// jitters between keystrokes.
+var FIND_CLASS_BONUS = 2          // "slack" must rank the Slack app above a tab titled "Slack …"
+var FIND_LENGTH_PENALTY = 0.01    // per haystack character: shorter wins a tie
+var FIND_LENGTH_CAP = 80          // characters of haystack that count toward the penalty; beyond this length no longer discriminates
+function _wordStart(hay, i) {
+    if (i === 0) return true
+    var c = hay.charAt(i - 1)
+    return c === " " || c === "-" || c === "_" || c === "." || c === "/" || c === ":"
+}
+// Score of `needle` as a subsequence of `hay` (both lowercase), or null when it is not one.
+// Best alignment, not first occurrence: a dynamic programme over (query char, haystack
+// position). Per matched character: 1, +2 when it directly follows the previous matched
+// character, +3 at a word start. Greedy first-occurrence would trap "ab" on the isolated 'a' of
+// "xax ab" and miss the whole word. O(n·m) per haystack; n is a few characters. The length
+// penalty is capped at FIND_LENGTH_CAP characters so a real match always scores above zero and
+// a very long title cannot outweigh a word-start bonus.
+function fuzzyScore(needle, hay) {
+    var n = needle.length, m = hay.length
+    if (!n || n > m) return null
+    var NEG = -Infinity, prev = null
+    for (var i = 0; i < n; i++) {
+        var c = needle.charAt(i), cur = new Array(m), bestBefore = NEG   // best of prev[0..j-1]
+        for (var j = 0; j < m; j++) {
+            if (i > 0 && j >= 1 && prev[j - 1] > bestBefore) bestBefore = prev[j - 1]
+            cur[j] = NEG
+            if (hay.charAt(j) !== c) continue
+            var base = 1 + (_wordStart(hay, j) ? 3 : 0)
+            if (i === 0) { cur[j] = base; continue }
+            var from = bestBefore                                   // gapped
+            if (j >= 1 && prev[j - 1] !== NEG && prev[j - 1] + 2 > from) from = prev[j - 1] + 2   // consecutive
+            if (from !== NEG) cur[j] = from + base
+        }
+        prev = cur
+    }
+    var best = NEG
+    for (var k = 0; k < m; k++) if (prev[k] > best) best = prev[k]
+    return best === NEG ? null : best - Math.min(m, FIND_LENGTH_CAP) * FIND_LENGTH_PENALTY
+}
+function findMatches(query, windows) {
+    var q = String(query || "").toLowerCase()
+    if (!q.length) return []
+    var out = []
+    for (var i = 0; i < windows.length; i++) {
+        var w = windows[i]
+        var sc = fuzzyScore(q, String(w.cls || "").toLowerCase())
+        if (sc !== null) sc += FIND_CLASS_BONUS
+        var st = fuzzyScore(q, String(w.title || "").toLowerCase())
+        var best = sc === null ? st : (st === null ? sc : Math.max(sc, st))
+        if (best === null) continue
+        out.push({ address: w.address, score: best, order: i })
+    }
+    // Scores are doubles. A class hit computes (base − penalty) + bonus and a title hit
+    // (base + bonus) − penalty; mathematically equal scores can differ by one ulp and skip
+    // the order tie-break. Unreachable with realistic window names (0 of 300k cases); if this
+    // line is touched, add the bonus before subtracting the penalty.
+    out.sort(function (a, b) { return (b.score - a.score) || (a.order - b.order) })
+    return out.map(function (m) { return { address: m.address, score: m.score } })
+}
+// Does a key event's `text` extend the query? Returns the new query, or `query` unchanged.
+// Control characters never do (Backspace, Escape, Return and Tab all arrive with non-empty
+// text on Qt), and whitespace never starts a query. Digits are accepted here: whether a digit
+// jumps instead is decided by the key handler, from whether the query is empty.
+function appendQueryText(query, text) {
+    var q = String(query || ""), t = String(text || "")
+    if (!t.length) return q
+    for (var i = 0; i < t.length; i++) {
+        var c = t.charCodeAt(i)
+        if (c < 0x20 || c === 0x7f) return q
+    }
+    if (!q.length && !t.trim().length) return q
+    return q + t
+}
+
+// Arrow keys while a query is active: the same nearest-in-direction rule as `navigate`, but only
+// over boxes whose workspace holds a match, so Right from ws 2 lands on ws 4 when 3 has no
+// match and Down from ws 1 lands on ws 6 like it does without a query. `matchWs[i]` is the
+// workspace id of the i-th ranked match; returns the match index to select — the best-ranked
+// match on the chosen workspace — or `current` when there is nowhere to go.
+function navigateMatches(boxes, matchWs, current, dir) {
+    var has = {}
+    for (var i = 0; i < matchWs.length; i++) has[matchWs[i]] = true
+    var cand = []
+    for (var b = 0; b < boxes.length; b++) if (has[boxes[b].workspaceId]) cand.push(boxes[b])
+    if (!cand.length) return current
+    var curWs = (current >= 0 && current < matchWs.length) ? matchWs[current] : -1
+    var ci = indexOfWorkspace(cand, curWs)
+    var ni = ci < 0 ? 0 : navigate(cand, ci, dir)
+    var ws = cand[ni].workspaceId
+    for (var m = 0; m < matchWs.length; m++) if (matchWs[m] === ws) return m
+    return current
+}
