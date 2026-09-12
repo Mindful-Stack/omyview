@@ -50,7 +50,8 @@ function M.new(opts)
   hl.dsp = {
     focus = d("focus"),
     cursor = { move = d("cursor.move") },
-    window = { float = d("window.float"), move = d("window.move"), fullscreen = d("window.fullscreen") },
+    window = { float = d("window.float"), move = d("window.move"), fullscreen = d("window.fullscreen"),
+               bring_to_top = d("window.bring_to_top") },
     workspace = { toggle_special = d("workspace.toggle_special") },
   }
   function hl.dispatch(desc)
@@ -61,7 +62,9 @@ function M.new(opts)
     end
     local a = desc.args or {}
     local w = a.window and byAddress(a.window) or nil
-    if desc.name == "window.float" and w then
+    if desc.name == "focus" then
+      hl.__active_window = w or hl.__active_window
+    elseif desc.name == "window.float" and w then
       w.floating = not w.floating
     elseif desc.name == "window.move" and w then
       if a.workspace then
@@ -73,6 +76,9 @@ function M.new(opts)
       -- Hyprland's toggle rule: asking for the mode the window has turns it off, otherwise switches.
       local want = (a.mode == "maximized") and 1 or 2
       w.fullscreen = (w.fullscreen == want) and 0 or want
+    elseif desc.name == "window.bring_to_top" then
+      -- No window arg (it acts on whatever is currently focused): record it, never a no-op.
+      hl.__top = hl.__active_window
     elseif desc.name == "cursor.move" then
       hl.__cursor = { x = a.x, y = a.y }
     elseif desc.name == "workspace.toggle_special" then

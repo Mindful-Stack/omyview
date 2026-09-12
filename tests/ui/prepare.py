@@ -34,7 +34,6 @@ qml = qml.replace('id: root', '''id: root
     // Compile-time dependency on the `hintKeys` id in Overview.qml: renaming or removing that
     // id breaks every UI suite at once with "Invalid alias reference", not just Scratchpad's.
     property alias testHintModel: hintKeys.model
-    property alias testBoxes: boxesModel
     property alias testHintRow: hint
     property QtObject compositor: QtObject {
         property var monitors: ({values: []})

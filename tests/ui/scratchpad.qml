@@ -186,6 +186,23 @@ TestCase {
         verify(view.testCard.width + 0.5 >= view.testHintRow.implicitWidth + 2 * view.testCard.pad)
     }
 
+    // Distinguishes: Ctrl+S appending the row below the fold with no visible change on an
+    // overflowing layout (the feature's primary keystroke would look like a no-op).
+    function test_showing_the_row_scrolls_it_into_view_on_an_overflowing_layout() {
+        var rows = []
+        for (var i = 1; i <= 40; i++) rows.push(wsRow(i, i === 1 ? [client("0xA", "chromium", "Chromium", 100, false)] : []))
+        rows.push(wsRow(scratchHyprId, [client("0xS", "Bitwarden", "Bitwarden", 900, true)], "special:scratchpad"))
+        view.compositor.workspaces = { values: rows }
+        view.rebuild()
+        verify(view.testFlick.contentHeight > view.testFlick.height + 100, "fixture must overflow")
+        compare(view.testFlick.contentY, 0)
+        ctrlS()
+        var b = boxOf(-2), f = view.testFlick
+        verify(b !== null)
+        verify(b.y + b.h <= f.contentY + f.height + 0.5, "the row is scrolled into view")
+        compare(view.selectedId, 1, "the selection did not move")
+    }
+
     function tileOf(addr) {
         var ch = view.testCanvas.children
         for (var i = 0; i < ch.length; i++) if (ch[i].model && ch[i].model.address === addr) return ch[i]
@@ -329,5 +346,26 @@ TestCase {
         verify(cmd.indexOf('workspace = "2"') >= 0, "numeric target, got: " + cmd)
         verify(cmd.indexOf('special:scratchpad') < 0)
         verify(cmd.indexOf('window.float') >= 0, "the tiled-insert chunk (float → move → un-float)")
+    }
+    // Distinguishes: a scratchpad tile click that only focuses (the window would stay under a
+    // floating sibling) or that goes through the plain focus of a normal tile.
+    function test_tile_click_in_the_row_focuses_and_brings_to_top() {
+        ctrlS()
+        var t = tileOf("0xS"), p = t.mapToItem(tc, t.width / 2, t.height / 2)
+        mouseClick(tc, p.x, p.y, Qt.LeftButton)
+        compare(view.compositor.commands.length, 1)
+        var cmd = view.compositor.commands[0]
+        verify(cmd.indexOf('address:0xS') >= 0)
+        verify(cmd.indexOf('bring_to_top') >= 0, "raised above its siblings, got: " + cmd)
+        compare(view.opened, false)
+    }
+    // Distinguishes: a normal tile click going through the scratchpad-raise path.
+    function test_tile_click_on_a_normal_workspace_stays_on_the_plain_focus_path() {
+        var t = tileOf("0xB"), p = t.mapToItem(tc, t.width / 2, t.height / 2)
+        mouseClick(tc, p.x, p.y, Qt.LeftButton)
+        compare(view.compositor.commands.length, 1)
+        var cmd = view.compositor.commands[0]
+        compare(cmd, 'hl.dsp.focus({ window = "address:0xB" })')
+        compare(view.opened, false)
     }
 }

@@ -120,7 +120,8 @@ Press **SUPER+P**. The overlay opens on your focused monitor.
 | **Enter** (query active) | Focus the selected match and close                        |
 | **Esc** (query active)   | Clear the query                                            |
 | **Ctrl+S**                          | Show / hide the scratchpad row                        |
-| **Enter / click** (scratchpad row) | Bring the scratchpad up and close                     |
+| **Enter / click the empty row** (scratchpad) | Bring the scratchpad up and close           |
+| **click a tile in the row** (scratchpad) | Focus that window, raised above its siblings   |
 | **Esc / click-out**      | Close                                                     |
 
 Digits jump to a workspace only while the query is empty; once you've typed a letter, digits

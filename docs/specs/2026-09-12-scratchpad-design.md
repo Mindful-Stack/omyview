@@ -59,7 +59,7 @@ key for the scratchpad, tiled insertion into the scratchpad.
 | arrows                          | reach it spatially (it is the bottom row); with a query, only if a window in it matches |
 | Enter on the scratchpad box     | dispatch the guarded show chunk (below), close                         |
 | click on the empty box          | same as Enter                                                          |
-| click on a tile in the row      | focus that window (existing path; Hyprland raises the scratchpad)      |
+| click on a tile in the row      | focus that window AND bring it to the top (`scratchpadFocusLua`): focus alone raises the scratchpad but leaves a floating window under its last-raised sibling |
 | drop a window on the box        | `hl.dsp.window.move({ workspace = "special:scratchpad", follow = false })`, plus the floating position chunk for floating windows |
 | drag a tile out of the row      | existing paths (floating move / tiled insert) to the numeric target    |
 | Esc / SUPER+P                   | unchanged                                                              |
@@ -107,8 +107,8 @@ workspace". After this change:
   `padWorkspaces`, `_orderedMonitorNames`, the monitor-group loop in `layout`, the digit keys.
 - Dispatch targets: `Logic.wsSelector(id)` returns `"special:scratchpad"` for `SCRATCHPAD_ID`
   and the numeric id otherwise; `floatingMoveLua`, the plain move and the chunks' "already
-  there" comparisons use it. `jump()` is never called with the scratchpad id (Enter on it goes
-  to the show chunk).
+  there" comparisons use it. `jump()` routes the scratchpad id to the show chunk and never to a
+  workspace focus, so Enter and the box click share one guard.
 - Pending-drop reconciliation: a pending move whose target is `SCRATCHPAD_ID` is acknowledged
   when the window's `workspaceId` from `buildInput()` is `SCRATCHPAD_ID` — which the remap
   guarantees as soon as Hyprland reports the window on `special:scratchpad`, whatever id it
@@ -134,7 +134,10 @@ workspace". After this change:
   workspace the same gesture re-tiles. Accepted asymmetry of the "plain silent move" decision.
 - A drag in flight when Ctrl+S is pressed: the row toggles; the drag continues; if the dragged
   window's own row disappears (dragging a scratchpad tile, then hiding the row) the drag is
-  cancelled via the existing `Component.onDestruction` → `endDrag()` path.
+  cancelled by `rebuild()`'s existing "dragged window no longer in the input → `endDrag()`"
+  check, before the delegate is destroyed.
+- **Showing the row scrolls it into view** without moving the selection: on an overflowing
+  layout the row is appended below the fold, and Ctrl+S must produce a visible change.
 - **Hiding the row with a drop into it still unacknowledged.** `applyTiles` keeps rows with a
   pending move, but a window on a hidden scratchpad is not in `buildInput()`, so nothing could
   acknowledge it and the optimistic tile would sit on the canvas until the 1.8 s deadline.

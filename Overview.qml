@@ -44,7 +44,19 @@ Item {
     }
     function toggleScratchpad() {
         if (scratchpadShown) hideScratchpad(); else scratchpadShown = true
+        // rebuild(), not scheduleRebuild(): a hidden scratchpad's toplevels already report live
+        // geometry (Hyprland keeps tracking them off-screen), so there is no stale data here to
+        // wait out with a refresh + settle.
         rebuild()
+        if (scratchpadShown) {
+            // Showing the row can append it below the fold on an overflowing layout: scroll it
+            // fully into view without moving the keyboard selection (a different intent).
+            var b = boxForWs(Logic.SCRATCHPAD_ID)
+            if (b && b.y + b.h > flick.contentY + flick.height) flick.contentY = b.y + b.h - flick.height
+        }
+        // A mid-drag toggle changes what boxes/tiles exist under the pointer; without this the
+        // drop preview would stay stale until the next pointer move.
+        updateDropTarget()
     }
 
     // theme — tone steps, not lines (see docs/specs/2026-09-10-restyle-design.md)
@@ -157,6 +169,8 @@ Item {
                         scale: m.scale, reserved: m.lastIpcObject ? m.lastIpcObject.reserved : [0,0,0,0],
                         transform: m.lastIpcObject ? m.lastIpcObject.transform : 0 })
         }
+        var monNames = {}
+        for (var mi0 = 0; mi0 < mons.length; mi0++) monNames[mons[mi0].name] = true
         var focusedMonitorName = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
         var wss = [], hws = Hyprland.workspaces ? Hyprland.workspaces.values : []
         var focusedWsId = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
@@ -171,7 +185,13 @@ Item {
             }
             var wsId = special ? Logic.SCRATCHPAD_ID : ws.id
             var mon = ws.monitor
-            wss.push({ id: wsId, monitorName: mon ? mon.name : (special ? focusedMonitorName : "?"), special: special,
+            // The scratchpad record only: Hyprland can report a monitor the layout will never
+            // know about (already removed, or none at all), which for a numbered workspace's "?"
+            // fallback means layout() silently skips it — but the scratchpad row must still
+            // appear, so fall back to the focused monitor by name instead.
+            var monName = special ? ((mon && monNames[mon.name]) ? mon.name : focusedMonitorName)
+                                  : (mon ? mon.name : "?")
+            wss.push({ id: wsId, monitorName: monName, special: special,
                        focused: ws.id === focusedWsId,
                        occupied: ws.toplevels && ws.toplevels.values.length > 0 })
             var tls = ws.toplevels ? ws.toplevels.values : []
@@ -180,7 +200,9 @@ Item {
                 if (!o || !o.at || !o.size || !o.address) continue
                 wins.push({ address: o.address, cls: o["class"] || "", title: o.title || "",
                             ax: o.at[0], ay: o.at[1], sw: o.size[0], sh: o.size[1],
-                            workspaceId: wsId, special: special, floating: !!o.floating,
+                            workspaceId: wsId,
+                            // Reserved for the workspace-lock feature; nothing reads this yet.
+                            special: special, floating: !!o.floating,
                             fullscreen: Logic.fullscreenMode(o),
                             grouped: !!(o.grouped && o.grouped.length) })
             }
@@ -571,7 +593,9 @@ Item {
         for (var i = 0; i < boxes.length; i++) {
             var b = boxes[i]
             var row = { workspaceId: b.workspaceId, bx: b.x, by: b.y, bw: b.w, bh: b.h,
-                        focused: !!b.focused, occupied: !!b.occupied, special: b.special || "" }
+                        focused: !!b.focused, occupied: !!b.occupied,
+                        // Reserved for the workspace-lock feature; nothing reads this yet.
+                        special: b.special || "" }
             seen[b.workspaceId] = true
             var idx = boxIndex(b.workspaceId)
             if (idx < 0) boxesModel.append(row)
@@ -1112,7 +1136,13 @@ Item {
                                         root.submitDrop(addr, targetWs, dropX, dropY, ptr.x, ptr.y)
                                     root.endDrag()
                                     if (!wasMoved) {
-                                        Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })')
+                                        // A tile in the scratchpad row: focus alone raises the special
+                                        // workspace but leaves the window under whichever floating
+                                        // sibling was last on top (see Logic.scratchpadFocusLua).
+                                        if (model.wsid === Logic.SCRATCHPAD_ID)
+                                            Hyprland.dispatch(Logic.scratchpadFocusLua(addr))
+                                        else
+                                            Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })')
                                         root.close()
                                     }
                                 }

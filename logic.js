@@ -814,3 +814,19 @@ function scratchpadShowLua() {
         'end'
     ).replace(/\n\s*/g, ' ')
 }
+
+// Tile click in the scratchpad row: focus raises the special workspace, but a floating
+// scratchpad window stays under whichever sibling was last on top — bring it to the top too.
+function scratchpadFocusLua(addr) {
+    return (
+        'function()\n' +
+        '  local sel = "address:' + addr + '"\n' +
+        '  ' + dispatchGuardLua() + '\n' +
+        '  local ok, err = pcall(function()\n' +
+        '    run(hl.dsp.focus({ window = sel }))\n' +
+        '    run(hl.dsp.window.bring_to_top())\n' +
+        '  end)\n' +
+        '  ' + reportLua('focus scratchpad window') + '\n' +
+        'end'
+    ).replace(/\n\s*/g, ' ')
+}

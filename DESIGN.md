@@ -44,7 +44,8 @@ jump to one — keyboard or mouse.
   - `occupied` — only workspaces with windows.
 - **Select:** number keys jump (1-9, `0`=10) · arrow keys move highlight + Enter ·
   mouse click · Esc cancels. Jump via Hyprland dispatch `workspace <id>` · type to find
-  (fuzzy, class+title; Enter focuses the window).
+  (fuzzy, class+title; Enter focuses the window) · Ctrl+S shows the scratchpad row (Enter on
+  it brings the scratchpad up).
 - **Styling:** pulls the active Omarchy theme (colors/fonts) so it matches the bar and
   re-themes automatically.
 
