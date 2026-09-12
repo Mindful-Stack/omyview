@@ -59,6 +59,10 @@ TestCase {
         for (var i = 0; i < ch.length; i++) if (ch[i].objectName === name) out.push(ch[i])
         return out
     }
+    function scratchRow(rows) {
+        for (var i = 0; i < rows.length; i++) if (rows[i].name === "special:scratchpad") return rows[i]
+        fail("no scratchpad row in the seed")
+    }
 
     // Distinguishes: the special workspace leaking into the layout by default (the pre-feature
     // exclusion broken), and a row keyed on Hyprland's id instead of the constant.
@@ -217,6 +221,7 @@ TestCase {
     function test_floating_drop_names_the_target_and_positions() {
         ctrlS()
         dragOntoScratchpad("0xB")
+        compare(view.compositor.commands.length, 1)
         var cmd = view.compositor.commands[0]
         verify(cmd.indexOf('workspace = "special:scratchpad"') >= 0)
         verify(cmd.indexOf('x = "') >= 0, "positioned")
@@ -229,10 +234,12 @@ TestCase {
         dragOntoScratchpad("0xA")
         verify(view.pendingMoves["0xA"] !== undefined, "pending after the drop")
         compare(view.pendingMoves["0xA"].workspaceId, -2)
+        view.rebuild()
+        verify(view.pendingMoves["0xA"] !== undefined, "not acknowledged while the window is still on ws 1")
         // The compositor lands the window on the scratchpad (its id, its geometry).
         var rows = view.compositor.workspaces.values
-        var win = rows[0].toplevels.values.shift().lastIpcObject
-        rows[2].toplevels.values.push({ lastIpcObject: win })
+        var win = rows[0].toplevels.values.shift().lastIpcObject   // the seed puts ws1 first
+        scratchRow(rows).toplevels.values.push({ lastIpcObject: win })
         view.rebuild()
         compare(view.pendingMoves["0xA"], undefined, "acknowledged")
         compare(row("0xA").wsid, -2)
@@ -249,8 +256,8 @@ TestCase {
         compare(row("0xA").wsid, 1, "back on its authoritative workspace (the move has not landed)")
         // Now the move lands; showing the row again picks the window up from compositor data.
         var rows = view.compositor.workspaces.values
-        var win = rows[0].toplevels.values.shift().lastIpcObject
-        rows[2].toplevels.values.push({ lastIpcObject: win })
+        var win = rows[0].toplevels.values.shift().lastIpcObject   // the seed puts ws1 first
+        scratchRow(rows).toplevels.values.push({ lastIpcObject: win })
         view.rebuild()
         compare(row("0xA"), null, "on a hidden scratchpad: not shown")
         ctrlS()
@@ -279,8 +286,48 @@ TestCase {
         mouseMove(tc, p.x + 12, p.y + 2, 20)
         mouseMove(tc, goal.x, goal.y, 20)
         mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        compare(view.compositor.commands.length, 1)
         var cmd = view.compositor.commands[0]
         verify(cmd.indexOf('workspace = "2"') >= 0, "numeric target, got: " + cmd)
         verify(cmd.indexOf('special:scratchpad') < 0)
+    }
+    // Distinguishes: the tiled-insert plan running for the scratchpad target. With a tiled
+    // window IN the scratchpad there is an anchor to split, so only the explicit bypass keeps
+    // the insertion half away and the drop wash on. (The default seed's scratchpad window is
+    // floating, which cannot tell the two apart.)
+    function test_tiled_anchor_in_the_scratchpad_never_yields_an_insertion_plan() {
+        var rows = view.compositor.workspaces.values
+        scratchRow(rows).toplevels.values = [ { lastIpcObject: client("0xT", "foot", "tiled in scratch", 100, false) } ]
+        view.rebuild()
+        ctrlS()
+        verify(row("0xT") !== null)
+        var goal = dragOntoScratchpad("0xA", false)
+        compare(view.dropTargetWs, -2)
+        compare(view.dropTargetAddress, "", "no insertion anchor even though a tiled window is there")
+        compare(view.dropTargetSide, "")
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        compare(view.compositor.commands.length, 1)
+        var cmd = view.compositor.commands[0]
+        verify(cmd.indexOf('workspace = "special:scratchpad"') >= 0)
+        verify(cmd.indexOf('smart_split') < 0 && cmd.indexOf('cursor') < 0, "not the tiled-insert chunk")
+    }
+    // Distinguishes: a tiled scratchpad window that cannot be dragged out, or that dispatches
+    // to the scratchpad instead of the numeric target through the tiled-insert path.
+    function test_dragging_a_tiled_scratchpad_window_out_uses_the_tiled_insert_path() {
+        var rows = view.compositor.workspaces.values
+        scratchRow(rows).toplevels.values = [ { lastIpcObject: client("0xT", "foot", "tiled in scratch", 100, false) } ]
+        view.rebuild()
+        ctrlS()
+        var t = tileOf("0xT"), p = t.mapToItem(tc, t.width / 2, t.height / 2)
+        var b = boxOf(2), goal = view.testCanvas.mapToItem(tc, b.x + b.w / 2, b.y + b.h / 2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x + 12, p.y + 2, 20)
+        mouseMove(tc, goal.x, goal.y, 20)
+        mouseRelease(tc, goal.x, goal.y, Qt.LeftButton)
+        compare(view.compositor.commands.length, 1)
+        var cmd = view.compositor.commands[0]
+        verify(cmd.indexOf('workspace = "2"') >= 0, "numeric target, got: " + cmd)
+        verify(cmd.indexOf('special:scratchpad') < 0)
+        verify(cmd.indexOf('window.float') >= 0, "the tiled-insert chunk (float → move → un-float)")
     }
 }
