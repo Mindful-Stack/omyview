@@ -43,7 +43,7 @@ TestCase {
         view.open()
         wait(400)
     }
-    function cleanup() { view.close() }
+    function cleanup() { view.close(); tileDataSpy.target = null }
     function row(addr) {
         for (var i = 0; i < view.testModel.count; i++)
             if (view.testModel.get(i).address === addr) return view.testModel.get(i)
@@ -398,6 +398,21 @@ TestCase {
         compare(view.selectedId, 40)
         verify(boxRowVisible(40), "a rebuild that changes the match must scroll to it")
     }
+    // Distinguishes: followMatch(false) skipping the scroll when the same match moved to another
+    // workspace (the frame would sit on a box outside the viewport with nothing visible).
+    function test_rebuild_that_moves_the_match_scrolls_to_it() {
+        seedOverflow()
+        type("needle")
+        compare(view.selectedId, 40); verify(boxRowVisible(40))
+        var rows = view.compositor.workspaces.values
+        var needle = rows[39].toplevels.values[0]
+        rows[39].toplevels.values = []
+        rows[0].toplevels.values.push(needle)   // same window, now on ws 1 (top row, off-screen)
+        view.rebuild()
+        compare(view.selectedMatchAddress, "0xN", "same match")
+        compare(view.selectedId, 1)
+        verify(boxRowVisible(1), "the frame followed the window and scrolled to it")
+    }
 
     function tileOf(addr) {
         var ch = view.testCanvas.children
@@ -423,6 +438,27 @@ TestCase {
         keyClick(Qt.Key_Escape)
         verify(tileOf("0xC").opacity > 0.9, "clearing the query undims")
         compare(sel.visible, false)
+    }
+    // Distinguishes: `dimmed` ignoring the drop target (its accent border and insertion preview
+    // would render at 35 % opacity exactly when they matter). Two windows on ws 1: 0xA (chromium,
+    // the query's match) and 0xD (a non-match); drag 0xA over 0xD.
+    function test_drop_target_is_never_dimmed() {
+        view.compositor.workspaces.values[0].toplevels.values.push(
+            { lastIpcObject: client("0xD", "foot", "other", 700) })
+        view.rebuild()
+        type("chromium")
+        var src = tileOf("0xA"), dst = tileOf("0xD")
+        verify(dst.opacity < 0.5, "non-match starts dimmed")
+        var p = src.mapToItem(tc, src.width / 2, src.height / 2)
+        var q = dst.mapToItem(tc, dst.width / 2, dst.height / 2)
+        mousePress(tc, p.x, p.y, Qt.LeftButton)
+        mouseMove(tc, p.x + 12, p.y + 2, 20)
+        mouseMove(tc, q.x, q.y, 20)
+        compare(view.dropTargetAddress, "0xD", "fixture: 0xD is the drop anchor")
+        verify(dst.opacity > 0.9, "drop target is not dimmed")
+        compare(childNamed(dst, "matchOutline").visible, false)
+        mouseRelease(tc, q.x, q.y, Qt.LeftButton)
+        verify(dst.opacity < 0.5, "re-dims after the drop")
     }
     // Distinguishes: a bar that does not show the query, or an "n of m" computed from the
     // wrong index base (0-based would read "0 of 2").

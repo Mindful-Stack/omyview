@@ -240,16 +240,19 @@ Item {
         for (var i = 0; i < a.length; i++) if (a[i].address !== b[i].address) return false
         return true
     }
-    // Move the box selection to the selected match's workspace, scrolling it into view only
-    // when `scroll` is not explicitly false — a background rebuild that keeps the same match
-    // must not scroll (it would yank the viewport back on every settle tick).
+    // Move the box selection to the selected match's workspace, scrolling it into view unless
+    // `scroll` is explicitly false AND the match stayed on the same box — a same-match settle
+    // tick must not scroll (it would yank the viewport back on every tick), but a match that
+    // moved to another workspace (a rule, another actor) must still be scrolled to, or the
+    // frame is left stranded off-screen on an overflowing layout.
     function followMatch(scroll) {
         var addr = selectedMatchAddress; if (!addr) return
         var win = _windowByAddress[addr]; if (!win) return
         var idx = Logic.indexOfWorkspace(boxes, win.workspaceId)
         if (idx < 0) return
+        var moved = idx !== selectedIndex          // the match changed workspace, or boxes shifted
         selectedIndex = idx
-        if (scroll !== false) ensureSelectedVisible()
+        if (scroll !== false || moved) ensureSelectedVisible()
     }
     // Query cleared: back to the pre-query workspace; if it is gone, the focused workspace,
     // then the first box. Deliberately not rebuild()'s nearest-position rule — after a search
@@ -501,9 +504,11 @@ Item {
         }
     }
 
-    // Roles differ across two rows only by value: compare before `set`, because ListModel.set
-    // emits a change even for identical values, and every binding (and Behavior) downstream
-    // would re-evaluate on each 60 ms settle tick.
+    // Roles differ across two rows only by value: compare before `set`. On current Qt (6.11) an
+    // identical partial `set` is already a no-op — this guard is not working around that, it
+    // keeps the loop cheap (skips the compare-and-signal machinery entirely on a settle tick
+    // where nothing changed) and documents the intent: callers rely on `set` only firing for a
+    // genuine change.
     function rowDiffers(cur, next) {
         for (var k in next) if (cur[k] !== next[k]) return true
         return false

@@ -25,8 +25,11 @@ Item {
     signal unfullscreenRequested()
 
     // Find: `matched` and `selectedMatch` mirror the tile-model roles; `dimmed` is "a query is
-    // active and this tile does not match". The outline uses `accent` (Overview's selection
-    // colour), never borderColor, so a drop-target border and a match ring stay distinguishable.
+    // active and this tile does not match". The outline needs its own `accent` input rather
+    // than reusing `borderColor`: at rest `borderColor` is the near-invisible hairline, so a
+    // ring bound to it would draw nothing. (Not because the two need to differ while both are
+    // showing — the drop border and the match ring never co-exist on one tile: a drop target
+    // is excluded from dimming and the ring hides itself while `dropTarget` is true.)
     property bool matched: false
     property bool selectedMatch: false
     property bool dimmed: false

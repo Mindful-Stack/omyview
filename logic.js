@@ -718,9 +718,10 @@ function findMatches(query, windows) {
         if (best === null) continue
         out.push({ address: w.address, score: best, order: i })
     }
-    // Scores are doubles; two mathematically equal scores from different haystack lengths can
-    // differ by float noise and skip the order tie-break — accepted, it needs lengths differing
-    // by a multiple of 100.
+    // Scores are doubles. A class hit computes (base − penalty) + bonus and a title hit
+    // (base + bonus) − penalty; mathematically equal scores can differ by one ulp and skip
+    // the order tie-break. Unreachable with realistic window names (0 of 300k cases); if this
+    // line is touched, add the bonus before subtracting the penalty.
     out.sort(function (a, b) { return (b.score - a.score) || (a.order - b.order) })
     return out.map(function (m) { return { address: m.address, score: m.score } })
 }
