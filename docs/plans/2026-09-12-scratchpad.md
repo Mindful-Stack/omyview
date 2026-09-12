@@ -298,7 +298,7 @@ case("floating move to the scratchpad names the workspace and positions", functi
   local hl = Mock.new({ windows = { ["0xabc"] = { address = "0xabc", floating = true, fullscreen = 0,
                                                   workspace = { id = 1 }, at = { x = 0, y = 0 } } } })
   run("FLOATING_MOVE_SCRATCH", hl)
-  seq(hl, { "window.move", "window.move" })
+  seq(hl, { "window.move", "window.move", "cursor.move" })   -- restoreFocusLua always restores the cursor
   eq(hl.__log[1].args.workspace, "special:scratchpad", "named target")
   eq(hl.__windows["0xabc"].workspace.name, "special:scratchpad")
   eq(hl.__windows["0xabc"].at.x, 200)
@@ -307,7 +307,7 @@ case("floating move already on the scratchpad only positions", function()
   local hl = Mock.new({ windows = { ["0xabc"] = { address = "0xabc", floating = true, fullscreen = 0,
                                                   workspace = { id = -98, name = "special:scratchpad" }, at = { x = 0, y = 0 } } } })
   run("FLOATING_MOVE_SCRATCH", hl)
-  seq(hl, { "window.move" })
+  seq(hl, { "window.move", "cursor.move" })
   eq(hl.__log[1].args.x, "200")
 end)
 ```
