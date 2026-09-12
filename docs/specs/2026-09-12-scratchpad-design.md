@@ -129,6 +129,9 @@ workspace". After this change:
 
 - Ctrl+S with the overlay showing a query: the row appears, its windows join the match list on
   the same rebuild; hiding it drops them and the successor rule picks the next match.
+- A tiled window already in the scratchpad cannot be re-tiled *within* the scratchpad from the
+  overview: the drop is a plain move, and a same-workspace plain move is a no-op. On a normal
+  workspace the same gesture re-tiles. Accepted asymmetry of the "plain silent move" decision.
 - A drag in flight when Ctrl+S is pressed: the row toggles; the drag continues; if the dragged
   window's own row disappears (dragging a scratchpad tile, then hiding the row) the drag is
   cancelled via the existing `Component.onDestruction` → `endDrag()` path.
