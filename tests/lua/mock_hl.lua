@@ -19,6 +19,8 @@ function M.new(opts)
   hl.__workspaces = opts.workspaces or {}
   hl.__active_window = opts.active_window or nil
   hl.__cursor = { x = 5, y = 6 }
+  hl.__active_special = opts.active_special or nil          -- { name = "special:…" } or nil
+  function hl.get_active_special_workspace() return hl.__active_special end
 
   local function byAddress(sel)
     local a = sel:match("^address:(.+)$")
@@ -49,6 +51,7 @@ function M.new(opts)
     focus = d("focus"),
     cursor = { move = d("cursor.move") },
     window = { float = d("window.float"), move = d("window.move"), fullscreen = d("window.fullscreen") },
+    workspace = { toggle_special = d("workspace.toggle_special") },
   }
   function hl.dispatch(desc)
     hl.__log[#hl.__log + 1] = desc
@@ -61,7 +64,10 @@ function M.new(opts)
     if desc.name == "window.float" and w then
       w.floating = not w.floating
     elseif desc.name == "window.move" and w then
-      if a.workspace then w.workspace = { id = tonumber(a.workspace) } end
+      if a.workspace then
+        local n = tonumber(a.workspace)
+        w.workspace = n and { id = n } or { id = -99, name = a.workspace }
+      end
       if a.x and a.y then w.at = { x = tonumber(a.x), y = tonumber(a.y) } end
     elseif desc.name == "window.fullscreen" and w then
       -- Hyprland's toggle rule: asking for the mode the window has turns it off, otherwise switches.
@@ -69,6 +75,10 @@ function M.new(opts)
       w.fullscreen = (w.fullscreen == want) and 0 or want
     elseif desc.name == "cursor.move" then
       hl.__cursor = { x = a.x, y = a.y }
+    elseif desc.name == "workspace.toggle_special" then
+      local name = "special:" .. tostring(desc.args)
+      if hl.__active_special and hl.__active_special.name == name then hl.__active_special = nil
+      else hl.__active_special = { name = name } end
     end
     return { ok = true, pass_event = false }
   end

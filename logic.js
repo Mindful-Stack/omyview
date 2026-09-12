@@ -253,6 +253,25 @@ function layout(input) {
         if (r < order.length - 1) y += P.rowSpacing             // between monitor groups
     }
 
+    // Trailing scratchpad group (a special workspace shown on demand): its own header band —
+    // always, even when the monitor groups have none — and one cell, below every monitor group.
+    // The monitor loop above skips negative ids, so the scratchpad never lands in a monitor row.
+    for (var si = 0; si < input.workspaces.length; si++) {
+        var sws = input.workspaces[si]; if (!sws.special) continue
+        if (groups.length) y += P.rowSpacing
+        var sgroup = { monitorName: sws.monitorName, special: sws.special, x: 0, y: y, w: 0, h: 0,
+                       inset: inset, headerH: P.headerH, focused: false }
+        groups.push(sgroup)
+        y += inset + P.headerH
+        var sbox = { workspaceId: sws.id, monitorName: sws.monitorName, monFocused: false,
+                     special: sws.special, x: inset, y: y, w: cw, h: cellHeightFor(monByName[sws.monitorName]),
+                     focused: !!sws.focused, occupied: !!sws.occupied }
+        boxes.push(sbox); boxByWs[sbox.workspaceId] = sbox
+        y += sbox.h + inset
+        sgroup.w = cw + 2 * inset; sgroup.h = y - sgroup.y
+        if (sgroup.w > canvasW) canvasW = sgroup.w
+    }
+
     // Tiled windows that are not fullscreen or maximized, per workspace, in usable-rect-local
     // coords: what a fullscreen window's slot is recovered from (see recoverSlot).
     var tiledByWs = {}
@@ -545,8 +564,11 @@ function unfullscreenLua(addr) {
 // tile, never the operation. Tiled windows return early (they take the tiled-insert chunk).
 // The position payload keeps the exact-coordinate string form the old two-phase move used.
 function floatingMoveLua(addr, targetWs, pos) {
-    var ws = String(parseInt(targetWs, 10))
+    var ws = wsSelector(targetWs)
     var x = Math.round(pos.x), y = Math.round(pos.y)
+    var same = isScratchpad(targetWs)
+        ? 'w.workspace ~= nil and w.workspace.name == "' + SCRATCHPAD_NAME + '"'
+        : 'w.workspace ~= nil and w.workspace.id == ' + ws
     return (
         'function()\n' +
         '  local sel = "address:' + addr + '"\n' +
@@ -554,7 +576,7 @@ function floatingMoveLua(addr, targetWs, pos) {
         '  if not w or not w.floating then return end\n' +
         '  local prevW, cur = hl.get_active_window(), hl.get_cursor_pos()\n' +
         '  ' + dispatchGuardLua() + '\n' +
-        '  local same = w.workspace ~= nil and w.workspace.id == ' + ws + '\n' +
+        '  local same = ' + same + '\n' +
         '  local ok, err = pcall(function()\n' +
         '    if not same then run(hl.dsp.window.move({ workspace = "' + ws + '", follow = false, window = sel })) end\n' +
         '    run(hl.dsp.window.move({ x = "' + x + '", y = "' + y + '", window = sel }))\n' +
@@ -757,4 +779,33 @@ function navigateMatches(boxes, matchWs, current, dir) {
     var ws = cand[ni].workspaceId
     for (var m = 0; m < matchWs.length; m++) if (matchWs[m] === ws) return m
     return current
+}
+
+// ---- Scratchpad (docs/specs/2026-09-12-scratchpad-design.md) ---------------------------
+// Hyprland allocates special-workspace ids dynamically (the next free id below -99), so the
+// overview never uses the reported id: buildInput() identifies the scratchpad by name and remaps
+// it, and its windows, onto this constant. It cannot collide: regular ids are >= 1, -1 is the
+// "none" sentinel, Hyprland's special ids are <= -99.
+var SCRATCHPAD_ID = -2
+var SCRATCHPAD_NAME = "special:scratchpad"
+function isScratchpad(id) { return id === SCRATCHPAD_ID }
+// "Has a workspace": only -1 means none. Replaces every `id >= 0` test that meant that, so
+// the scratchpad's negative id is legal wherever a selection or target is checked.
+function hasWs(id) { return typeof id === "number" && isFinite(id) && id !== -1 }
+// Dispatch target: the scratchpad by name, a normal workspace by id.
+function wsSelector(id) { return isScratchpad(id) ? SCRATCHPAD_NAME : String(id) }
+
+// Enter on the scratchpad box: bring the scratchpad up on the focused monitor, like SUPER+S —
+// but never hide one that is already up. One guarded chunk, reported like the others.
+function scratchpadShowLua() {
+    return (
+        'function()\n' +
+        '  ' + dispatchGuardLua() + '\n' +
+        '  local ok, err = pcall(function()\n' +
+        '    local ws = hl.get_active_special_workspace()\n' +
+        '    if not (ws and ws.name == "' + SCRATCHPAD_NAME + '") then run(hl.dsp.workspace.toggle_special("scratchpad")) end\n' +
+        '  end)\n' +
+        '  ' + reportLua('show scratchpad') + '\n' +
+        'end'
+    ).replace(/\n\s*/g, ' ')
 }
