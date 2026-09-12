@@ -37,6 +37,7 @@ Item {
         anchors { left: glyph.right; right: countText.left; leftMargin: 8; rightMargin: 12
                   verticalCenter: parent.verticalCenter }
         text: bar.query
+        textFormat: Text.PlainText        // the query is matched literally, so show it literally
         elide: Text.ElideLeft             // the end of the query is what the user just typed
         color: bar.fg
         opacity: bar.count > 0 ? 1 : 0.5      // muted when nothing matches

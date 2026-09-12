@@ -475,6 +475,19 @@ TestCase {
         keyClick(Qt.Key_Escape)
         compare(view.testBar.visible, false)
     }
+    // Distinguishes: Qt's automatic text-format detection rendering a markup-shaped query as
+    // rich text ("<b>slack</b>" would show as bold "slack") while matching searches the literal
+    // string. Rendered as plain text, the tagged query is much wider than the bare word.
+    function test_markup_shaped_query_is_shown_literally() {
+        var q = childNamed(view.testBar, "findQuery")
+        type("<b>slack</b>")
+        compare(view.query, "<b>slack</b>")
+        compare(q.textFormat, Text.PlainText)
+        var tagged = q.contentWidth
+        keyClick(Qt.Key_Backspace, Qt.ControlModifier)
+        type("slack")
+        verify(tagged > q.contentWidth * 1.5, "tags are drawn, not interpreted")
+    }
     // Distinguishes: a bar sized from an unconstrained text row (a long query would push the
     // count outside the card and drift it with the centred row). The count must stay pinned
     // to the bar's right edge and the query must elide inside the remaining space.
