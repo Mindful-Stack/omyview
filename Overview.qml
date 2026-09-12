@@ -809,7 +809,10 @@ Item {
             // narrow-screen case, which is expected to 2-D scroll per the spec).
             readonly property real maxCardW: panel.width > 0 ? panel.width - 16 : 1616
             readonly property real maxCardH: panel.height > 0 ? panel.height - 64 : 900
-            implicitWidth: Math.min(canvas.implicitWidth + pad * 2, maxCardW)
+            // The hint row never widens past the screen (maxCardW still caps it), but it does
+            // widen a narrow card: a layout with few/narrow workspaces must not clip the six
+            // key hints against the card edge.
+            implicitWidth: Math.min(Math.max(canvas.implicitWidth, config.hint ? hint.implicitWidth : 0) + pad * 2, maxCardW)
             implicitHeight: Math.min(canvas.implicitHeight + pad * 2 + hintSpace, maxCardH)
             // Card resize (workspaces added/removed, columns change) glides; the Flickable
             // viewport follows card.width, the canvas content is already at its new size.
@@ -962,8 +965,10 @@ Item {
 
                     // monitor chips layer (siblings, above boxes) — an icon (laptop or external
                     // screen) plus the connector name, one per group; the focused monitor's
-                    // chip is accented and sits on the group backdrop. Shown only when the
-                    // layout has more than one group (then each group carries a header band).
+                    // chip is accented and sits on the group backdrop. The model is every group;
+                    // visibility is per delegate (root.multiMonitor for a monitor group, always
+                    // for the scratchpad group), so the scratchpad chip shows even with a single
+                    // monitor.
                     Repeater {
                         model: panel.visible ? root.groups : []
                         Text {

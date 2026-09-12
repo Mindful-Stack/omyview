@@ -54,6 +54,11 @@ TestCase {
     }
     function type(s) { for (var i = 0; i < s.length; i++) keyClick(s.charAt(i)) }
     function ctrlS() { keyClick("s", Qt.ControlModifier) }
+    function canvasItems(name) {
+        var out = [], ch = view.testCanvas.children
+        for (var i = 0; i < ch.length; i++) if (ch[i].objectName === name) out.push(ch[i])
+        return out
+    }
 
     // Distinguishes: the special workspace leaking into the layout by default (the pre-feature
     // exclusion broken), and a row keyed on Hyprland's id instead of the constant.
@@ -150,5 +155,30 @@ TestCase {
         view.compositor.workspaces = { values: rows }
         ctrlS()
         verify(row("0xS") !== null, "the scratchpad tile survives a null ws.monitor")
+    }
+    // Distinguishes: buildInput admitting ANY negative-id workspace while shown (the unnamed
+    // `special`, which holds share-picker popups, would join the row and steal the synthetic
+    // scratchpad's place). Only the workspace NAMED special:scratchpad may enter.
+    function test_only_the_named_special_enters_the_layout() {
+        var rows = [ wsRow(1, [client("0xA", "chromium", "Chromium", 100, false)]),
+                     wsRow(-99, [client("0xP", "Popup", "Share popup", 300, true)], "special"),
+                     wsRow(scratchHyprId, [client("0xS", "Bitwarden", "Bitwarden", 900, true)], "special:scratchpad") ]
+        view.compositor.workspaces = { values: rows }
+        ctrlS()
+        compare(row("0xP"), null, "the unnamed special must not enter the layout")
+        verify(row("0xS") !== null)
+        compare(boxOf(-2).occupied, true, "the real scratchpad, not a synthetic row")
+    }
+    // Distinguishes: the chip visibility ignoring `special` (single-monitor mode would show no
+    // label on the row) and the chip text falling through to the monitor branch.
+    function test_scratchpad_row_carries_its_chip_in_single_monitor_mode() {
+        ctrlS()
+        var chips = canvasItems("monitorChip"), shown = chips.filter(function (c) { return c.visible })
+        compare(shown.length, 1, "only the scratchpad chip is visible with one monitor")
+        compare(shown[0].text, "SCRATCHPAD")
+    }
+    // Distinguishes: a card narrower than its hint row (six entries spill onto the scrim).
+    function test_card_is_at_least_as_wide_as_the_hint_row() {
+        verify(view.testCard.width + 0.5 >= view.testHintRow.implicitWidth + 2 * view.testCard.pad)
     }
 }
