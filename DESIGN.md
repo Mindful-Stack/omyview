@@ -37,7 +37,8 @@ jump to one — keyboard or mouse.
   would swallow SUPER+P was disproved by testing; no on-demand-focus change needed.)
 - **Cells:** one per workspace. Windows drawn as a **spatial mini-map** — each window a
   rounded box at its real relative position/size with the app icon (title if it fits).
-  Focused workspace = accent border; empty = dimmed. Excludes `special:scratchpad`.
+  Focused workspace = accent border; empty = dimmed. `special:scratchpad` is excluded by
+  default and shown as its own row on Ctrl+S (see the scratchpad spec).
 - **`mode` setting** (one property, default `full`):
   - `full` — all pinned workspaces for each monitor, empties dimmed (stable positions).
   - `occupied` — only workspaces with windows.
